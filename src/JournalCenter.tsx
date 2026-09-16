@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Eye, FileCheck2, Landmark, RefreshCw } from 'lucide-react';
 import { api } from './api';
+import { AccountingCashOutQueue } from './AccountingCashOutQueue';
 
 type Company = { id: string; name: string };
 type JournalRow = {
@@ -67,9 +68,11 @@ export function JournalCenter({ canReview, canPost }: { canReview: boolean; canP
   useEffect(() => { if (companyId) { setDetail(null); void loadJournals(companyId); } }, [companyId]);
 
   return <div className="page-content journal-center">
+    {canReview && <AccountingCashOutQueue companyId={companyId} onJournalCreated={() => { setMessage('Akun pengeluaran sudah diarahkan dan draft jurnal berhasil dibuat.'); void loadJournals(); }}/>} 
+
     <section className="section-card">
       <div className="section-title master-heading">
-        <div><span className="eyebrow">ACCOUNTING WORKSPACE</span><h3>Review Jurnal Otomatis</h3><p>Finance Verified → draft jurnal → review Accounting → posted. Jurnal posted tidak diubah langsung.</p></div>
+        <div><span className="eyebrow">ACCOUNTING WORKSPACE</span><h3>Review Jurnal</h3><p>Finance Verified → arah akun jika perlu → draft jurnal → review Accounting → posted. Jurnal posted tidak diubah langsung.</p></div>
         <div className="heading-actions"><select value={companyId} onChange={e => setCompanyId(e.target.value)}><option value="">Pilih company</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><button className="secondary-button" onClick={() => loadJournals()}><RefreshCw size={15}/> Refresh</button></div>
       </div>
       {message && <div className="success-banner"><CheckCircle2 size={18}/><span>{message}</span></div>}
@@ -77,7 +80,7 @@ export function JournalCenter({ canReview, canPost }: { canReview: boolean; canP
       <div className="data-table-wrap">
         <table><thead><tr><th>No Jurnal</th><th>Tanggal</th><th>Sumber</th><th>Status</th><th className="numeric">Debit</th><th className="numeric">Kredit</th><th></th></tr></thead>
         <tbody>{journals.map(j => <tr key={j.id}><td><strong>{j.journal_number}</strong><small className="journal-meta">Engine v{j.engine_version || '-'}</small></td><td>{j.journal_date?.slice(0,10)}</td><td>{j.source_transaction_number || 'Manual'}<small className="journal-meta">{j.transaction_type || j.journal_type}</small></td><td><span className={j.status === 'POSTED' ? 'status-ok' : 'status-draft'}>{j.status}</span></td><td className="numeric">Rp{money(j.total_debit)}</td><td className="numeric">Rp{money(j.total_credit)}</td><td><button className="icon-button" onClick={() => openJournal(j.id)} title="Lihat jurnal"><Eye size={16}/></button></td></tr>)}</tbody></table>
-        {!loading && journals.length === 0 && <div className="empty-state"><Landmark size={34}/><strong>Belum ada jurnal</strong><span>Verifikasi transaksi Finance untuk menghasilkan draft jurnal otomatis.</span></div>}
+        {!loading && journals.length === 0 && <div className="empty-state"><Landmark size={34}/><strong>Belum ada jurnal</strong><span>Verifikasi transaksi Finance untuk menghasilkan draft jurnal.</span></div>}
       </div>
     </section>
 
