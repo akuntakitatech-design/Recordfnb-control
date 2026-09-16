@@ -16,6 +16,25 @@ const transactionWriterRoles = new Set([
   'CLIENT_OUTLET_USER',
 ]);
 
+const transactionVerifierRoles = new Set([
+  'AK_SUPER_ADMIN',
+  'AK_ACCOUNTING_REVIEWER',
+  'AK_ACCOUNTING_STAFF',
+  'CLIENT_FINANCE_MANAGER',
+  'CLIENT_FINANCE_STAFF',
+]);
+
+const journalReviewerRoles = new Set([
+  'AK_SUPER_ADMIN',
+  'AK_ACCOUNTING_REVIEWER',
+  'AK_ACCOUNTING_STAFF',
+]);
+
+const journalPosterRoles = new Set([
+  'AK_SUPER_ADMIN',
+  'AK_ACCOUNTING_REVIEWER',
+]);
+
 export async function isSystemAdmin(userId: string) {
   const result = await query<{ is_system_admin: boolean }>(
     'SELECT is_system_admin FROM users WHERE id=$1 AND status=\'ACTIVE\' LIMIT 1',
@@ -94,26 +113,45 @@ export async function hasWorkspaceRole(userId: string, workspaceId: string, allo
   return Boolean(result.rowCount);
 }
 
+export async function hasCompanyRole(userId: string, companyId: string, allowedRoles: Set<string>) {
+  if (await isSystemAdmin(userId)) return true;
+  const roles = [...allowedRoles];
+  const result = await query(
+    `SELECT 1
+       FROM companies c
+       JOIN workspace_memberships wm ON wm.workspace_id=c.workspace_id
+       JOIN roles r ON r.id=wm.role_id
+      WHERE c.id=$2 AND wm.user_id=$1 AND wm.status='ACTIVE'
+        AND (wm.company_id IS NULL OR wm.company_id=c.id)
+        AND r.code=ANY($3::text[])
+      LIMIT 1`,
+    [userId, companyId, roles],
+  );
+  return Boolean(result.rowCount);
+}
+
 export async function canWriteWorkspaceMaster(userId: string, workspaceId: string) {
   return hasWorkspaceRole(userId, workspaceId, masterWriterRoles);
 }
 
 export async function canWriteCompanyMaster(userId: string, companyId: string) {
-  if (await isSystemAdmin(userId)) return true;
-  const result = await query<{ workspace_id: string }>('SELECT workspace_id FROM companies WHERE id=$1', [companyId]);
-  if (!result.rowCount) return false;
-  const workspaceId = result.rows[0].workspace_id;
-  if (!(await canAccessCompany(userId, companyId))) return false;
-  return hasWorkspaceRole(userId, workspaceId, masterWriterRoles);
+  return hasCompanyRole(userId, companyId, masterWriterRoles);
 }
 
 export async function canCreateTransaction(userId: string, companyId: string) {
-  if (await isSystemAdmin(userId)) return true;
-  const result = await query<{ workspace_id: string }>('SELECT workspace_id FROM companies WHERE id=$1', [companyId]);
-  if (!result.rowCount) return false;
-  const workspaceId = result.rows[0].workspace_id;
-  if (!(await canAccessCompany(userId, companyId))) return false;
-  return hasWorkspaceRole(userId, workspaceId, transactionWriterRoles);
+  return hasCompanyRole(userId, companyId, transactionWriterRoles);
+}
+
+export async function canVerifyTransaction(userId: string, companyId: string) {
+  return hasCompanyRole(userId, companyId, transactionVerifierRoles);
+}
+
+export async function canReviewJournal(userId: string, companyId: string) {
+  return hasCompanyRole(userId, companyId, journalReviewerRoles);
+}
+
+export async function canPostJournal(userId: string, companyId: string) {
+  return hasCompanyRole(userId, companyId, journalPosterRoles);
 }
 
 export async function canManageWorkspaceUsers(userId: string, workspaceId: string) {
