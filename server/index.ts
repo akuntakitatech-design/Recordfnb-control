@@ -18,6 +18,7 @@ import { clientMasterRouter } from './clientMasterRoutes.js';
 import { clientTransactionRouter } from './clientTransactionRoutes.js';
 import { clientCashOutRouter } from './clientCashOutRoutes.js';
 import { clientCashInRouter } from './clientCashInRoutes.js';
+import { clientItemUsageRouter } from './clientItemUsageRoutes.js';
 import { accountingCashOutRouter } from './accountingCashOutRoutes.js';
 import { accountingCashInRouter } from './accountingCashInRoutes.js';
 import { canWriteCompanyMaster, canWriteWorkspaceMaster, isSystemAdmin } from './access.js';
@@ -215,6 +216,7 @@ app.use('/api/client-master', clientMasterRouter);
 app.use('/api/client-transactions', clientTransactionRouter);
 app.use('/api/client-transactions', clientCashOutRouter);
 app.use('/api/client-transactions', clientCashInRouter);
+app.use('/api/client-transactions', clientItemUsageRouter);
 app.use('/api/transactions', transactionRouter);
 app.use('/api/access', accessRouter);
 app.use('/api/master/coa-standard', coaTemplateRouter);
@@ -223,7 +225,7 @@ app.use('/api/accounting-cash-outs', accountingCashOutRouter);
 app.use('/api/accounting-cash-ins', accountingCashInRouter);
 
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(rootDir, 'dist')));
+  app.use(express.static(path.join(rootDir, 'dist'));
   app.get('*', (_req, res) => res.sendFile(path.join(rootDir, 'dist', 'index.html')));
 }
 
