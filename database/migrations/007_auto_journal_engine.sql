@@ -107,3 +107,27 @@ UPDATE coa_template_item_categories c
  WHERE c.template_id=t.id
    AND t.code='AK_FNB_STANDARD_V1'
    AND c.category_code IN ('BAHAN_BAKU','BAHAN_PENDUKUNG','SETENGAH_JADI','PACKAGING');
+
+-- Upgrade companies that already used the system F&B template without overwriting user-edited mappings.
+INSERT INTO chart_of_accounts(workspace_id,company_id,code,name,account_type,normal_balance,allow_manual_posting,report_group,report_subgroup)
+SELECT c.workspace_id,c.id,a.code,a.name,a.account_type,a.normal_balance,a.allow_manual_posting,a.report_group,a.report_subgroup
+  FROM companies c
+  JOIN company_coa_template_applications app ON app.company_id=c.id
+  JOIN coa_templates t ON t.id=app.template_id AND t.code='AK_FNB_STANDARD_V1'
+  JOIN coa_template_accounts a ON a.template_id=t.id AND a.code LIKE '5103-%'
+ GROUP BY c.workspace_id,c.id,a.code,a.name,a.account_type,a.normal_balance,a.allow_manual_posting,a.report_group,a.report_subgroup
+ON CONFLICT(company_id,code) DO NOTHING;
+
+UPDATE item_category_account_mappings m
+   SET usage_account_id=coa.id,
+       updated_at=NOW()
+  FROM companies c
+  JOIN company_coa_template_applications app ON app.company_id=c.id
+  JOIN coa_templates t ON t.id=app.template_id AND t.code='AK_FNB_STANDARD_V1'
+  JOIN item_categories ic ON ic.workspace_id=c.workspace_id
+  JOIN coa_template_item_categories tm ON tm.template_id=t.id AND tm.category_code=ic.code
+  JOIN chart_of_accounts coa ON coa.company_id=c.id AND coa.code=tm.usage_account_code
+ WHERE m.company_id=c.id
+   AND m.category_id=ic.id
+   AND m.usage_account_id IS NULL
+   AND tm.usage_account_code IS NOT NULL;
