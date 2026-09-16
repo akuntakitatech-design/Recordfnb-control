@@ -2,7 +2,7 @@ import Decimal from 'decimal.js';
 import type { PoolClient } from 'pg';
 import { pool } from './db.js';
 
-const ENGINE_VERSION = '0.7';
+const ENGINE_VERSION = '0.8';
 
 type TxHeader = {
   id: string;
@@ -280,8 +280,26 @@ async function buildPlan(client: PoolClient, tx: TxHeader, userId: string) {
   const lines: JournalLinePlan[] = [];
 
   if (tx.transaction_type === 'PURCHASE_INVOICE') {
-    const payable = important.get('TRADE_PAYABLE');
-    if (!payable) throw new Error('IMPORTANT_ACCOUNT_TRADE_PAYABLE_REQUIRED');
+    let purchaseCreditAccount: string;
+    let purchaseCreditLabel: string;
+    let purchasePaymentType: 'CASH' | 'CREDIT';
+
+    if (tx.financial_account_id) {
+      const financial = await client.query<{ coa_account_id: string }>(
+        `SELECT coa_account_id FROM financial_accounts WHERE id=$1 AND company_id=$2 AND status='ACTIVE'`,
+        [tx.financial_account_id, tx.company_id],
+      );
+      if (!financial.rowCount) throw new Error('INVALID_FINANCIAL_ACCOUNT');
+      purchaseCreditAccount = financial.rows[0].coa_account_id;
+      purchaseCreditLabel = 'Pembelian tunai';
+      purchasePaymentType = 'CASH';
+    } else {
+      const payable = important.get('TRADE_PAYABLE');
+      if (!payable) throw new Error('IMPORTANT_ACCOUNT_TRADE_PAYABLE_REQUIRED');
+      purchaseCreditAccount = payable;
+      purchaseCreditLabel = 'Utang usaha';
+      purchasePaymentType = 'CREDIT';
+    }
 
     for (const line of txLines) {
       const debitAccount = line.line_type === 'ITEM' ? line.inventory_account_id : line.account_id;
@@ -291,6 +309,7 @@ async function buildPlan(client: PoolClient, tx: TxHeader, userId: string) {
         description: line.description || `Pembelian ${tx.transaction_number}`,
         locationId: line.location_id || tx.location_id, costCenterId: line.cost_center_id,
         partnerId: tx.partner_id, itemId: line.item_id, sourceLineId: line.id,
+        metadata: { paymentType: purchasePaymentType },
       });
       if (amount(line.tax_amount).gt(0)) {
         const taxAccount = await resolveTaxAccount(client, tx, line, 'INPUT', taxDefaults);
@@ -299,14 +318,16 @@ async function buildPlan(client: PoolClient, tx: TxHeader, userId: string) {
           description: `Pajak masukan ${tx.transaction_number}`,
           locationId: line.location_id || tx.location_id, costCenterId: line.cost_center_id,
           partnerId: tx.partner_id, itemId: line.item_id, sourceLineId: line.id,
+          metadata: { paymentType: purchasePaymentType },
         });
       }
       await applyPurchaseInventory(client, tx, line, userId);
     }
     addPlanLine(lines, {
-      accountId: payable, debit: new Decimal(0), credit: amount(tx.grand_total),
-      description: `Utang usaha ${tx.transaction_number}`,
+      accountId: purchaseCreditAccount, debit: new Decimal(0), credit: amount(tx.grand_total),
+      description: `${purchaseCreditLabel} ${tx.transaction_number}`,
       locationId: tx.location_id, costCenterId: null, partnerId: tx.partner_id, itemId: null, sourceLineId: null,
+      metadata: { paymentType: purchasePaymentType },
     });
   } else if (tx.transaction_type === 'CASH_OUT' || tx.transaction_type === 'CASH_IN') {
     if (!tx.financial_account_id) throw new Error('FINANCIAL_ACCOUNT_REQUIRED');
