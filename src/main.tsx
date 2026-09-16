@@ -8,6 +8,7 @@ import './financeMaster.css';
 import './settingsSecurity.css';
 import './userAccess.css';
 import './standardCoa.css';
+import './journalCenter.css';
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
