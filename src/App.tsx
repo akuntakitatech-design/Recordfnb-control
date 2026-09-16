@@ -24,6 +24,7 @@ import { TransactionForm } from './TransactionForm';
 import { SettingsSecurity } from './SettingsSecurity';
 import { UserAccessCenter } from './UserAccessCenter';
 import { StandardCoaCenter } from './StandardCoaCenter';
+import { JournalCenter } from './JournalCenter';
 
 type Session = {
   user: { id: string; email: string; fullName: string; isSystemAdmin: boolean };
@@ -44,7 +45,7 @@ type Summary = { workspaces: number; companies: number; locations: number; items
 type Workspace = { id: string; code: string; name: string; status: string };
 type Company = { id: string; workspace_id: string; code: string; name: string; status: string; workspace_name?: string };
 type Location = { id: string; company_id: string; code: string; name: string; location_type: string; status: string; company_name?: string };
-type Page = 'dashboard' | 'organization' | 'items' | 'finance' | 'coa-standard' | 'transactions' | 'access' | 'settings';
+type Page = 'dashboard' | 'organization' | 'items' | 'finance' | 'coa-standard' | 'transactions' | 'control' | 'access' | 'settings';
 type OrganizationTab = 'workspace' | 'company' | 'location';
 
 const locationLabel: Record<string, string> = {
@@ -54,7 +55,8 @@ const locationLabel: Record<string, string> = {
 
 const pageTitles: Record<Page, string> = {
   dashboard: 'Dashboard', organization: 'Master Organisasi', items: 'Barang & Inventory',
-  finance: 'Finance & Accounting Master', 'coa-standard': 'COA Standard & Mapping', transactions: 'Transaksi', access: 'User & Hak Akses', settings: 'Pengaturan',
+  finance: 'Finance & Accounting Master', 'coa-standard': 'COA Standard & Mapping', transactions: 'Transaksi',
+  control: 'Accounting Control Center', access: 'User & Hak Akses', settings: 'Pengaturan',
 };
 
 function Login({ onLogin }: { onLogin: () => void }) {
@@ -82,7 +84,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
       <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nama@perusahaan.com" autoFocus/></label>
       <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"/></label>
       {error && <div className="form-error">{error}</div>}
-      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.6 · Development</small>
+      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.7 · Development</small>
     </form></section>
   </main>;
 }
@@ -114,6 +116,20 @@ export function App() {
     session?.user.isSystemAdmin || session?.memberships.some(x => x.role_code === 'AK_SUPER_ADMIN')
   ), [session]);
 
+  const canVerifyTransactions = useMemo(() => Boolean(
+    session?.user.isSystemAdmin || session?.memberships.some(x => [
+      'AK_SUPER_ADMIN','AK_ACCOUNTING_REVIEWER','AK_ACCOUNTING_STAFF','CLIENT_FINANCE_MANAGER','CLIENT_FINANCE_STAFF',
+    ].includes(x.role_code))
+  ), [session]);
+
+  const canAccounting = useMemo(() => Boolean(
+    session?.user.isSystemAdmin || session?.memberships.some(x => x.side === 'AKUNTAKITA')
+  ), [session]);
+
+  const canPostJournal = useMemo(() => Boolean(
+    session?.user.isSystemAdmin || session?.memberships.some(x => ['AK_SUPER_ADMIN','AK_ACCOUNTING_REVIEWER'].includes(x.role_code))
+  ), [session]);
+
   if (session === undefined) return <div className="loading-screen">Memuat sistem...</div>;
   if (!session) return <Login onLogin={refreshSession}/>;
 
@@ -128,21 +144,22 @@ export function App() {
         <button className={active === 'finance' ? 'active' : ''} onClick={() => setActive('finance')}><Landmark size={18}/> Finance Master</button>
         <button className={active === 'coa-standard' ? 'active' : ''} onClick={() => setActive('coa-standard')}><BookOpenCheck size={18}/> COA Standard</button>
         <button className={active === 'transactions' ? 'active' : ''} onClick={() => setActive('transactions')}><ReceiptText size={18}/> Transaksi</button>
+        {canAccounting && <button className={active === 'control' ? 'active' : ''} onClick={() => setActive('control')}><ShieldCheck size={18}/> Control Center</button>}
         {canManageUsers && <button className={active === 'access' ? 'active' : ''} onClick={() => setActive('access')}><Users size={18}/> User & Akses</button>}
-        <button disabled><ShieldCheck size={18}/> Control Center <span className="soon">Next</span></button>
         <button className={active === 'settings' ? 'active' : ''} onClick={() => setActive('settings')}><Settings2 size={18}/> Pengaturan</button>
       </nav>
       <button className="logout-button" onClick={logout}><LogOut size={18}/> Keluar</button>
     </aside>
 
     <section className="content-shell">
-      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.6</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
+      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.7</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
       {active === 'dashboard' && <Dashboard summary={summary} setActive={setActive}/>} 
       {active === 'organization' && <OrganizationMaster/>}
       {active === 'items' && <MasterItemCenter/>}
       {active === 'finance' && <MasterFinanceCenter/>}
       {active === 'coa-standard' && <StandardCoaCenter/>}
-      {active === 'transactions' && <TransactionForm/>}
+      {active === 'transactions' && <TransactionForm canVerify={canVerifyTransactions}/>}
+      {active === 'control' && canAccounting && <JournalCenter canReview={canAccounting} canPost={canPostJournal}/>}
       {active === 'access' && canManageUsers && <UserAccessCenter/>}
       {active === 'settings' && <SettingsSecurity/>}
     </section>
@@ -153,13 +170,14 @@ function Dashboard({ summary, setActive }: { summary: Summary | null; setActive:
   return <div className="page-content">
     <section className="hero-panel"><div><span className="eyebrow">PONDASI SISTEM</span><h1>Master rapi, transaksi satu kali.</h1><p>Foundation menghubungkan client, company, location, item, finance master dan transaksi multi-baris sebagai dasar Finance Control → Accounting.</p></div><button className="primary-button compact" onClick={() => setActive('transactions')}>Coba Form Transaksi <ChevronRight size={17}/></button></section>
     <div className="metrics-grid"><Metric icon={<Users/>} value={summary?.workspaces ?? 0} label="Client / Workspace"/><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/></div>
-    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.6</span><h3>Yang sudah hidup</h3></div></div><div className="foundation-list">
+    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.7</span><h3>Yang sudah hidup</h3></div></div><div className="foundation-list">
       <div><b>01</b><span><strong>Multi-client, company & location</strong><small>Outlet, Central Kitchen, gudang, HO, production kitchen dan struktur cabang.</small></span></div>
       <div><b>02</b><span><strong>Master Data Center</strong><small>Item, kategori, satuan, relasi bisnis, COA, kas/bank, settlement, cost center dan pajak.</small></span></div>
       <div><b>03</b><span><strong>Generic multi-line transaction</strong><small>Multi-item / multi-account, diskon persen atau nominal, pajak per baris dan dimensi per baris.</small></span></div>
       <div><b>04</b><span><strong>Finance → Accounting foundation</strong><small>Transaksi sumber disimpan sekali dan status accounting berdiri terpisah dari status operasional.</small></span></div>
       <div><b>05</b><span><strong>User, role & tenant isolation</strong><small>Akses dibatasi per Client, Company dan Location dari API, bukan hanya disembunyikan di tampilan.</small></span></div>
       <div><b>06</b><span><strong>Standard COA & accounting mapping</strong><small>Template COA F&B generik dengan mapping akun penting, kelompok barang, kelompok aset dan pajak yang editable per company.</small></span></div>
+      <div><b>07</b><span><strong>Auto Journal & Moving Average</strong><small>Finance Verified menghasilkan draft jurnal otomatis; pemakaian stok menggunakan HPP moving average dan masuk ke Accounting Review.</small></span></div>
     </div></section>
   </div>;
 }
