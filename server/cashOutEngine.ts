@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import type { PoolClient } from 'pg';
 import { pool } from './db.js';
 
 const ENGINE_VERSION = '0.9';
@@ -11,7 +12,7 @@ type CashOutHeader = {
 
 function amount(value:string|number|null|undefined) { return new Decimal(value || 0); }
 
-async function loadHeader(client:any, transactionId:string) {
+async function loadHeader(client:PoolClient, transactionId:string) {
   const result = await client.query<CashOutHeader>(
     `SELECT id,workspace_id,company_id,location_id,financial_account_id,transaction_number,transaction_date::text,
             partner_id,grand_total::text,workflow_status,accounting_status,cash_out_type,payee_name
@@ -23,7 +24,7 @@ async function loadHeader(client:any, transactionId:string) {
   return result.rows[0];
 }
 
-async function financialCoa(client:any, tx:CashOutHeader) {
+async function financialCoa(client:PoolClient, tx:CashOutHeader) {
   if (!tx.financial_account_id) throw new Error('FINANCIAL_ACCOUNT_REQUIRED');
   const result = await client.query<{ coa_account_id:string }>(
     `SELECT coa_account_id FROM financial_accounts
@@ -33,7 +34,7 @@ async function financialCoa(client:any, tx:CashOutHeader) {
   return result.rows[0].coa_account_id;
 }
 
-async function importantAccount(client:any, companyId:string, roleCode:string) {
+async function importantAccount(client:PoolClient, companyId:string, roleCode:string) {
   const result = await client.query<{ account_id:string }>(
     `SELECT account_id FROM important_accounts WHERE company_id=$1 AND role_code=$2 LIMIT 1`, [companyId, roleCode],
   );
@@ -41,14 +42,14 @@ async function importantAccount(client:any, companyId:string, roleCode:string) {
   return result.rows[0].account_id;
 }
 
-async function existingJournal(client:any, transactionId:string) {
+async function existingJournal(client:PoolClient, transactionId:string) {
   const result = await client.query<{ id:string }>(
     `SELECT id FROM journal_headers WHERE source_transaction_id=$1 AND status<>'VOID' LIMIT 1`, [transactionId],
   );
   return result.rows[0]?.id || null;
 }
 
-async function createJournalHeader(client:any, tx:CashOutHeader) {
+async function createJournalHeader(client:PoolClient, tx:CashOutHeader) {
   const result = await client.query<{ id:string }>(
     `INSERT INTO journal_headers(
        workspace_id,company_id,journal_number,journal_date,journal_type,source_transaction_id,status,description,engine_version)
@@ -59,7 +60,7 @@ async function createJournalHeader(client:any, tx:CashOutHeader) {
   return result.rows[0].id;
 }
 
-async function markVerified(client:any, tx:CashOutHeader, userId:string, accountingStatus:string, action:string, extra:Record<string,unknown>={}) {
+async function markVerified(client:PoolClient, tx:CashOutHeader, userId:string, accountingStatus:string, action:string, extra:Record<string,unknown>={}) {
   await client.query(
     `UPDATE transaction_headers
         SET workflow_status='FINANCE_VERIFIED',operational_status='FINANCE_VERIFIED',accounting_status=$1,
@@ -73,7 +74,7 @@ async function markVerified(client:any, tx:CashOutHeader, userId:string, account
   );
 }
 
-async function verifyDebtPayment(client:any, tx:CashOutHeader, userId:string) {
+async function verifyDebtPayment(client:PoolClient, tx:CashOutHeader, userId:string) {
   if (!tx.partner_id) throw new Error('SUPPLIER_REQUIRED');
   const bankCoa = await financialCoa(client,tx);
   const payableCoa = await importantAccount(client,tx.company_id,'TRADE_PAYABLE');
@@ -158,7 +159,7 @@ export async function verifyClientCashOut(transactionId:string,userId:string) {
       `SELECT line_total::text FROM transaction_lines WHERE transaction_id=$1 ORDER BY line_no`, [tx.id],
     );
     if (!lines.rowCount) throw new Error('CASH_OUT_LINES_REQUIRED');
-    const total = lines.rows.reduce((sum:any,row:any) => sum.add(amount(row.line_total)),new Decimal(0));
+    const total = lines.rows.reduce((sum,row) => sum.add(amount(row.line_total)),new Decimal(0));
     if (!total.eq(amount(tx.grand_total))) throw new Error('CASH_OUT_TOTAL_MISMATCH');
     await markVerified(client,tx,userId,'NEEDS_ACCOUNT_DIRECTION','FINANCE_VERIFY_OPERATIONAL_EXPENSE',{ total:total.toFixed(4) });
     await client.query('COMMIT');
