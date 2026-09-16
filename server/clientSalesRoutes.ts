@@ -129,7 +129,7 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
   const locationId = text(req.body?.locationId);
   const sourceType = upper(req.body?.sourceType || 'PASTE');
   const sourceName = nullable(req.body?.sourceName);
-  const rawRows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const rawRows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
 
   if (!companyId || !locationId || !['MANUAL','PASTE','CSV'].includes(sourceType) || !rawRows.length) {
     return res.status(400).json({ error:'SALES_BATCH_REQUIRED_FIELDS' });
