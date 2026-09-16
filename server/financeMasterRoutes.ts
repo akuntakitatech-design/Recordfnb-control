@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from './db.js';
 import { requireAuth } from './auth.js';
 import { canWriteCompanyMaster, canWriteWorkspaceMaster } from './access.js';
+import { coaTemplateRouter } from './coaTemplateRoutes.js';
 
 export const financeMasterRouter = Router();
 financeMasterRouter.use(requireAuth);
@@ -135,3 +136,5 @@ financeMasterRouter.post('/financial-accounts', async (req, res) => {
   );
   res.status(201).json(result.rows[0]);
 });
+
+financeMasterRouter.use('/coa-standard', coaTemplateRouter);
