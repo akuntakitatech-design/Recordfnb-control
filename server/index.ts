@@ -207,7 +207,7 @@ app.use('/api/master', masterRouter);
 app.use('/api/master', financeMasterRouter);
 app.use('/api/transactions', transactionRouter);
 app.use('/api/access', accessRouter);
-app.use('/api/coa', coaTemplateRouter);
+app.use('/api/master/coa-standard', coaTemplateRouter);
 app.use('/api/journals', journalRouter);
 
 if (process.env.NODE_ENV === 'production') {
