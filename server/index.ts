@@ -49,6 +49,43 @@ app.post('/api/auth/logout', (_req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || '');
+  const newPassword = String(req.body?.newPassword || '');
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'CURRENT_AND_NEW_PASSWORD_REQUIRED' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'NEW_PASSWORD_TOO_SHORT' });
+  }
+  if (currentPassword === newPassword) {
+    return res.status(400).json({ error: 'NEW_PASSWORD_MUST_BE_DIFFERENT' });
+  }
+
+  const result = await query<{ id: string; email: string; full_name: string; password_hash: string; status: string }>(
+    'SELECT id,email,full_name,password_hash,status FROM users WHERE id=$1 LIMIT 1',
+    [req.sessionUser!.id],
+  );
+  const user = result.rows[0];
+  if (!user || user.status !== 'ACTIVE') return res.status(404).json({ error: 'USER_NOT_FOUND' });
+
+  const matches = await bcrypt.compare(currentPassword, user.password_hash);
+  if (!matches) return res.status(400).json({ error: 'CURRENT_PASSWORD_INVALID' });
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  await query('UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2', [passwordHash, user.id]);
+  await query(
+    `INSERT INTO audit_logs(user_id,entity_type,entity_id,action,after_data)
+     VALUES($1,'USER',$1,'PASSWORD_CHANGE',$2::jsonb)`,
+    [user.id, JSON.stringify({ changedAt: new Date().toISOString() })],
+  );
+
+  const session = { id: user.id, email: user.email, fullName: user.full_name };
+  setSessionCookie(res, signSession(session));
+  res.json({ ok: true });
+});
+
 app.get('/api/auth/me', requireAuth, async (req, res) => {
   const memberships = await query<{
     workspace_id: string;
