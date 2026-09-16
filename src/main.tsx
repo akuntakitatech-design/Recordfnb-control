@@ -10,6 +10,7 @@ import './userAccess.css';
 import './standardCoa.css';
 import './journalCenter.css';
 import './clientPurchase.css';
+import './clientCashOut.css';
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
