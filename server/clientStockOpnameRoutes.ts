@@ -3,6 +3,7 @@ import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
 import { canAccessCompany, canAccessLocation, canCreateTransaction, canVerifyTransaction } from './access.js';
 import { previewStockOpname, verifyStockOpname } from './stockOpnameEngine.js';
+import { clientSalesRouter } from './clientSalesRoutes.js';
 
 export const clientStockOpnameRouter = Router();
 clientStockOpnameRouter.use(requireAuth);
@@ -211,3 +212,5 @@ clientStockOpnameRouter.post('/stock-opnames/:transactionId/verify', async (req,
     res.status(400).json({ error: error instanceof Error ? error.message : 'VERIFY_STOCK_OPNAME_FAILED' });
   }
 });
+
+clientStockOpnameRouter.use(clientSalesRouter);
