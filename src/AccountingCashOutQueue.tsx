@@ -22,7 +22,7 @@ export function AccountingCashOutQueue({ companyId,onJournalCreated }:{ companyI
         api<PendingCashOut[]>(`/api/accounting-cash-outs/pending?companyId=${encodeURIComponent(companyId)}`),
         api<Account[]>(`/api/master/accounts?companyId=${encodeURIComponent(companyId)}`),
       ]);
-      setPending(p);setAccounts(a.filter(x=>!['ASSET','LIABILITY','EQUITY','REVENUE'].includes(x.account_type)));
+      setPending(p);setAccounts(a);
     } catch (err) { setError(err instanceof Error?err.message:'Gagal memuat antrean arah akun'); }
   }
 
@@ -46,7 +46,7 @@ export function AccountingCashOutQueue({ companyId,onJournalCreated }:{ companyI
     {error&&<div className="form-error">{error}</div>}
     {pending.map(tx=><div className="section-card" key={tx.id}>
       <div className="account-direction-head"><div><span className="pending-account-badge">PERLU ARAH AKUN</span><h3>{tx.transaction_number}</h3><p>{tx.transaction_date?.slice(0,10)} · {tx.payee_name||'Tanpa penerima'} · {tx.financial_account_name||'Kas/Bank'} · {tx.location_name||'—'}</p></div><div className="cash-out-total"><span>Total</span><strong>Rp{money(tx.grand_total)}</strong></div></div>
-      <div className="data-table-wrap"><table className="account-direction-table"><thead><tr><th>#</th><th>Keperluan</th><th>Location / Cost Center</th><th className="numeric">Nominal</th><th>Arahkan ke Akun</th></tr></thead><tbody>{tx.lines.map(line=><tr key={line.id}><td>{line.line_no}</td><td><strong>{line.description}</strong></td><td>{line.location_name||tx.location_name||'—'}{line.cost_center_name&&<small className="journal-meta">{line.cost_center_name}</small>}</td><td className="numeric">Rp{money(line.amount)}</td><td><select value={assignments[line.id]||''} onChange={e=>setAssignments(current=>({...current,[line.id]:e.target.value}))}><option value="">Pilih akun...</option>{accounts.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select></td></tr>)}</tbody></table></div>
+      <div className="data-table-wrap"><table className="account-direction-table"><thead><tr><th>#</th><th>Keperluan</th><th>Location / Cost Center</th><th className="numeric">Nominal</th><th>Arahkan ke Akun</th></tr></thead><tbody>{tx.lines.map(line=><tr key={line.id}><td>{line.line_no}</td><td><strong>{line.description}</strong></td><td>{line.location_name||tx.location_name||'—'}{line.cost_center_name&&<small className="journal-meta">{line.cost_center_name}</small>}</td><td className="numeric">Rp{money(line.amount)}</td><td><select value={assignments[line.id]||''} onChange={e=>setAssignments(current=>({...current,[line.id]:e.target.value}))}><option value="">Pilih akun...</option>{accounts.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name} [{a.account_type}]</option>)}</select></td></tr>)}</tbody></table></div>
       <div className="modal-actions"><button className="primary-button compact" disabled={savingId===tx.id} onClick={()=>direct(tx)}>{savingId===tx.id?'Membuat jurnal...':<>Arahkan Akun & Buat Draft Jurnal <ArrowRight size={15}/></>}</button></div>
     </div>)}
     {pending.length===0&&!error&&<div className="empty-state"><strong>Tidak ada transaksi yang menunggu arah akun</strong><span>Pengeluaran operasional Finance Verified akan muncul di sini.</span></div>}
