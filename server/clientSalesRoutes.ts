@@ -129,7 +129,7 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
   const locationId = text(req.body?.locationId);
   const sourceType = upper(req.body?.sourceType || 'PASTE');
   const sourceName = nullable(req.body?.sourceName);
-  const rawRows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const rawRows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
 
   if (!companyId || !locationId || !['MANUAL','PASTE','CSV'].includes(sourceType) || !rawRows.length) {
     return res.status(400).json({ error:'SALES_BATCH_REQUIRED_FIELDS' });
@@ -265,7 +265,7 @@ clientSalesRouter.post('/sales-batches/:batchId/verify', async (req,res) => {
   if (allowBelowZero && !(await canOverride(req.sessionUser!.id,batch.rows[0].company_id))) {
     return res.status(403).json({ error:'INVENTORY_OVERRIDE_MANAGER_REQUIRED' });
   }
-  try { res.json({ ok:true, ...(await verifySalesBatch(batchId,req.sessionUser!.id,allowBelowZero)) }); }
+  try { res.json({ ok:true, ...(await verifySalesBatch(batchId,req.sessionUser!.id,allowBelowZero)) });
   catch (error) {
     console.error('Verify sales batch failed:',error);
     res.status(400).json({ error:error instanceof Error ? error.message : 'VERIFY_SALES_BATCH_FAILED' });
