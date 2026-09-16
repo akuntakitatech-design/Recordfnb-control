@@ -117,3 +117,35 @@ SELECT c.id,v.payment_code,v.label,coa.id
   ) AS v(payment_code,label,account_code)
   JOIN chart_of_accounts coa ON coa.company_id=c.id AND coa.code=v.account_code
 ON CONFLICT(company_id,payment_code) DO NOTHING;
+
+-- Future companies get the same defaults when Akuntakita applies the standard COA.
+CREATE OR REPLACE FUNCTION seed_sales_payment_mappings_after_template()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM coa_templates t
+     WHERE t.id=NEW.template_id AND t.code='AK_FNB_STANDARD_V1'
+  ) THEN
+    INSERT INTO sales_payment_mappings(company_id,payment_code,label,account_id)
+    SELECT NEW.company_id,v.payment_code,v.label,coa.id
+      FROM (VALUES
+        ('CASH','Cash','1101-00-001'),
+        ('QRIS','QRIS','1107-00-001'),
+        ('TRANSFER','Transfer','1102-00-001'),
+        ('COMPLIMENT','Compliment','6000-00-003'),
+        ('GOFOOD','GoFood','1107-00-002'),
+        ('GRABFOOD','GrabFood','1107-00-002')
+      ) AS v(payment_code,label,account_code)
+      JOIN chart_of_accounts coa ON coa.company_id=NEW.company_id AND coa.code=v.account_code
+    ON CONFLICT(company_id,payment_code) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_seed_sales_payment_mappings_after_template
+ON company_coa_template_applications;
+
+CREATE TRIGGER trg_seed_sales_payment_mappings_after_template
+AFTER INSERT ON company_coa_template_applications
+FOR EACH ROW EXECUTE FUNCTION seed_sales_payment_mappings_after_template();
