@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Plus, Save, Trash2 } from 'lucide-react';
+import { CheckCircle2, FileCheck2, Plus, Save, Trash2 } from 'lucide-react';
 import { api } from './api';
 import { SearchSelect } from './SearchSelect';
 import { calculateDocument, type DocumentDiscount } from '../shared/transactionMath';
@@ -13,7 +13,11 @@ type FinancialAccount = { id: string; company_id: string; location_id: string | 
 type TaxCode = { id: string; workspace_id: string; code: string; name: string; rate: string; default_inclusive: boolean };
 type Partner = { id: string; workspace_id: string; code: string; name: string; partner_type: string; payment_term_days: number };
 type CostCenter = { id: string; company_id: string; code: string; name: string };
-type RecentTx = { id: string; transaction_type: string; transaction_number: string; transaction_date: string; workflow_status: string; accounting_status: string; grand_total: string; partner_name?: string; location_name?: string; financial_account_name?: string };
+type RecentTx = {
+  id: string; transaction_type: string; transaction_number: string; transaction_date: string; workflow_status: string;
+  accounting_status: string; grand_total: string; partner_name?: string; location_name?: string; financial_account_name?: string;
+  journal_id?: string | null; journal_status?: string | null; journal_number?: string | null;
+};
 
 type DiscountMode = '' | 'PERCENT' | 'AMOUNT';
 type Line = {
@@ -35,13 +39,14 @@ const transactionLabels: Record<string, string> = {
   PURCHASE_INVOICE: 'Invoice Pembelian',
   CASH_OUT: 'Kas / Bank Keluar',
   CASH_IN: 'Kas / Bank Masuk',
+  STOCK_USAGE: 'Pemakaian Barang',
 };
 
 const money = (value: string | number) => Number(value || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 const today = () => new Date().toISOString().slice(0, 10);
 const makeLine = (): Line => ({ key: crypto.randomUUID(), targetId: '', description: '', quantity: '1', unitId: '', unitPrice: '0', discountType: '', discountValue: '0', taxCodeId: '', taxIncluded: false, locationId: '', costCenterId: '' });
 
-export function TransactionForm() {
+export function TransactionForm({ canVerify = false }: { canVerify?: boolean }) {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -65,11 +70,14 @@ export function TransactionForm() {
   const [docDiscountValue, setDocDiscountValue] = useState('0');
   const [lines, setLines] = useState<Line[]>([makeLine()]);
   const [saving, setSaving] = useState(false);
+  const [verifyingId, setVerifyingId] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState<{ transaction_number: string; grand_total: string } | null>(null);
+  const [verifyMessage, setVerifyMessage] = useState('');
 
   const selectedCompany = companies.find(x => x.id === companyId);
-  const isItemTransaction = transactionType === 'PURCHASE_INVOICE';
+  const isStockUsage = transactionType === 'STOCK_USAGE';
+  const isItemTransaction = transactionType === 'PURCHASE_INVOICE' || isStockUsage;
   const isCashTransaction = transactionType === 'CASH_OUT' || transactionType === 'CASH_IN';
   const companyLocations = locations.filter(x => x.company_id === companyId);
 
@@ -96,29 +104,34 @@ export function TransactionForm() {
     setFinancialAccountId(current => fa.some(x => x.id === current) ? current : (fa[0]?.id || ''));
   }
 
+  async function reloadRecent() {
+    if (!companyId) return;
+    setRecent(await api<RecentTx[]>(`/api/transactions/recent?companyId=${encodeURIComponent(companyId)}`));
+  }
+
   useEffect(() => { void loadCompanies(); }, []);
   useEffect(() => { void loadCompanyMasters(); }, [companyId, selectedCompany?.workspace_id, locations.length]);
   useEffect(() => {
-    setLines([makeLine()]); setPartnerId(''); setDocDiscountType(''); setDocDiscountValue('0'); setSuccess(null); setError('');
+    setLines([makeLine()]); setPartnerId(''); setDocDiscountType(''); setDocDiscountValue('0'); setSuccess(null); setVerifyMessage(''); setError('');
   }, [transactionType]);
 
   const calculation = useMemo(() => {
     try {
-      const dd: DocumentDiscount = docDiscountType ? { type: docDiscountType, value: Number(docDiscountValue || 0) } : null;
+      const dd: DocumentDiscount = !isStockUsage && docDiscountType ? { type: docDiscountType, value: Number(docDiscountValue || 0) } : null;
       return calculateDocument(lines.map(line => {
         const tax = taxes.find(x => x.id === line.taxCodeId);
         return {
           id: line.key,
           quantity: Number(line.quantity || 0),
-          unitPrice: Number(line.unitPrice || 0),
-          discountType: line.discountType || null,
-          discountValue: Number(line.discountValue || 0),
-          taxRate: Number(tax?.rate || 0),
-          taxIncluded: line.taxIncluded,
+          unitPrice: isStockUsage ? 0 : Number(line.unitPrice || 0),
+          discountType: isStockUsage ? null : (line.discountType || null),
+          discountValue: isStockUsage ? 0 : Number(line.discountValue || 0),
+          taxRate: isStockUsage ? 0 : Number(tax?.rate || 0),
+          taxIncluded: isStockUsage ? false : line.taxIncluded,
         };
       }), dd);
     } catch { return null; }
-  }, [lines, taxes, docDiscountType, docDiscountValue]);
+  }, [lines, taxes, docDiscountType, docDiscountValue, isStockUsage]);
 
   function updateLine(key: string, patch: Partial<Line>) {
     setLines(rows => rows.map(row => row.key === key ? { ...row, ...patch } : row));
@@ -140,8 +153,9 @@ export function TransactionForm() {
   }
 
   async function saveDraft() {
-    setError(''); setSuccess(null);
+    setError(''); setSuccess(null); setVerifyMessage('');
     if (!companyId) return setError('Pilih company terlebih dahulu.');
+    if ((transactionType === 'PURCHASE_INVOICE' || isStockUsage) && !locationId) return setError('Pilih location untuk transaksi persediaan.');
     if (isCashTransaction && !financialAccountId) return setError('Pilih kas/bank untuk transaksi ini.');
     if (lines.some(line => !line.targetId)) return setError(`Masih ada baris yang belum memilih ${isItemTransaction ? 'item' : 'akun'}.`);
     if (!calculation) return setError('Perhitungan transaksi belum valid. Periksa diskon, qty, harga, dan pajak.');
@@ -150,10 +164,11 @@ export function TransactionForm() {
       const result = await api<{ transaction_number: string; grand_total: string }>('/api/transactions/drafts', {
         method: 'POST',
         body: JSON.stringify({
-          transactionType, companyId, locationId: locationId || null, partnerId: partnerId || null,
+          transactionType, companyId, locationId: locationId || null, partnerId: isStockUsage ? null : (partnerId || null),
           financialAccountId: isCashTransaction ? financialAccountId : null,
           transactionDate: date, referenceNumber: reference || null, notes: notes || null,
-          documentDiscountType: docDiscountType || null, documentDiscountValue: Number(docDiscountValue || 0),
+          documentDiscountType: isStockUsage ? null : (docDiscountType || null),
+          documentDiscountValue: isStockUsage ? 0 : Number(docDiscountValue || 0),
           lines: lines.map(line => ({
             lineType: isItemTransaction ? 'ITEM' : 'ACCOUNT',
             itemId: isItemTransaction ? line.targetId : null,
@@ -161,11 +176,11 @@ export function TransactionForm() {
             description: line.description,
             quantity: isItemTransaction ? Number(line.quantity || 0) : 1,
             unitId: isItemTransaction ? line.unitId || null : null,
-            unitPrice: Number(line.unitPrice || 0),
-            discountType: line.discountType || null,
-            discountValue: Number(line.discountValue || 0),
-            taxCodeId: line.taxCodeId || null,
-            taxIncluded: line.taxIncluded,
+            unitPrice: isStockUsage ? 0 : Number(line.unitPrice || 0),
+            discountType: isStockUsage ? null : (line.discountType || null),
+            discountValue: isStockUsage ? 0 : Number(line.discountValue || 0),
+            taxCodeId: isStockUsage ? null : (line.taxCodeId || null),
+            taxIncluded: isStockUsage ? false : line.taxIncluded,
             locationId: line.locationId || null,
             costCenterId: line.costCenterId || null,
           })),
@@ -173,9 +188,19 @@ export function TransactionForm() {
       });
       setSuccess(result);
       setLines([makeLine()]); setReference(''); setNotes(''); setDocDiscountType(''); setDocDiscountValue('0');
-      const r = await api<RecentTx[]>(`/api/transactions/recent?companyId=${encodeURIComponent(companyId)}`); setRecent(r);
+      await reloadRecent();
     } catch (err) { setError(err instanceof Error ? err.message : 'Gagal menyimpan transaksi'); }
     finally { setSaving(false); }
+  }
+
+  async function verifyTransaction(id: string) {
+    setVerifyingId(id); setError(''); setVerifyMessage('');
+    try {
+      const result = await api<{ ok: boolean; journal: { journal_number: string } }>(`/api/transactions/${id}/verify`, { method:'POST' });
+      setVerifyMessage(`Finance Verified. Draft jurnal ${result.journal.journal_number} berhasil dibuat.`);
+      await reloadRecent();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Gagal memverifikasi transaksi'); }
+    finally { setVerifyingId(''); }
   }
 
   const targetOptions = isItemTransaction
@@ -184,9 +209,10 @@ export function TransactionForm() {
 
   return <div className="page-content transaction-page">
     <section className="section-card transaction-card">
-      <div className="section-title transaction-title"><div><span className="eyebrow">GENERIC TRANSACTION ENGINE</span><h3>{transactionLabels[transactionType]}</h3><p>Form multi-baris: item/akun, diskon dan PPN per baris, serta location/cost center per baris.</p></div><div className="heading-actions"><select value={transactionType} onChange={e => setTransactionType(e.target.value)}><option value="PURCHASE_INVOICE">Invoice Pembelian</option><option value="CASH_OUT">Kas / Bank Keluar</option><option value="CASH_IN">Kas / Bank Masuk</option></select><button className="primary-button compact" onClick={saveDraft} disabled={saving}><Save size={16}/>{saving ? 'Menyimpan...' : 'Simpan Draft'}</button></div></div>
+      <div className="section-title transaction-title"><div><span className="eyebrow">GENERIC TRANSACTION ENGINE</span><h3>{transactionLabels[transactionType]}</h3><p>{isStockUsage ? 'Nilai pemakaian dihitung otomatis dari HPP Moving Average saat Finance Verified.' : 'Form multi-baris: item/akun, diskon dan PPN per baris, serta location/cost center per baris.'}</p></div><div className="heading-actions"><select value={transactionType} onChange={e => setTransactionType(e.target.value)}><option value="PURCHASE_INVOICE">Invoice Pembelian</option><option value="CASH_OUT">Kas / Bank Keluar</option><option value="CASH_IN">Kas / Bank Masuk</option><option value="STOCK_USAGE">Pemakaian Barang</option></select><button className="primary-button compact" onClick={saveDraft} disabled={saving}><Save size={16}/>{saving ? 'Menyimpan...' : 'Simpan Draft'}</button></div></div>
 
-      {success && <div className="success-banner"><CheckCircle2 size={18}/><span><strong>{success.transaction_number}</strong> tersimpan sebagai draft · Total Rp{money(success.grand_total)}</span></div>}
+      {success && <div className="success-banner"><CheckCircle2 size={18}/><span><strong>{success.transaction_number}</strong> tersimpan sebagai draft{isStockUsage ? ' · Nilai HPP dihitung saat verifikasi' : ` · Total Rp${money(success.grand_total)}`}</span></div>}
+      {verifyMessage && <div className="success-banner"><FileCheck2 size={18}/><span>{verifyMessage}</span></div>}
       {error && <div className="form-error transaction-error">{error}</div>}
 
       <div className="transaction-header-grid">
@@ -194,14 +220,14 @@ export function TransactionForm() {
         <label>Location<select value={locationId} onChange={e => setLocationId(e.target.value)}><option value="">— Company / HO —</option>{companyLocations.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
         <label>Tanggal<input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
         {isCashTransaction && <label>{transactionType === 'CASH_OUT' ? 'Bayar dari Kas / Bank' : 'Masuk ke Kas / Bank'}<select value={financialAccountId} onChange={e => setFinancialAccountId(e.target.value)}><option value="">Pilih kas/bank</option>{financialAccounts.map(x => <option key={x.id} value={x.id}>{x.name}{x.location_name ? ` — ${x.location_name}` : ''}</option>)}</select></label>}
-        <label>{isItemTransaction ? 'Supplier' : transactionType === 'CASH_OUT' ? 'Penerima / Relasi' : 'Sumber / Relasi'}<select value={partnerId} onChange={e => setPartnerId(e.target.value)}><option value="">— Opsional —</option>{partners.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+        {!isStockUsage && <label>{isItemTransaction ? 'Supplier' : transactionType === 'CASH_OUT' ? 'Penerima / Relasi' : 'Sumber / Relasi'}<select value={partnerId} onChange={e => setPartnerId(e.target.value)}><option value="">— Opsional —</option>{partners.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>}
         <label>Referensi<input value={reference} onChange={e => setReference(e.target.value)} placeholder="No invoice / referensi" /></label>
         <label>Catatan<input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Keterangan transaksi" /></label>
       </div>
 
       <div className="transaction-grid-wrap">
         <table className="transaction-grid">
-          <thead><tr><th>#</th><th className="target-col">{isItemTransaction ? 'Item' : 'Akun / Keperluan'}</th><th>Keterangan</th>{isItemTransaction && <><th>Qty</th><th>Satuan</th></>}<th>{isItemTransaction ? 'Harga' : 'Nilai'}</th><th>Diskon</th><th>PPN / Pajak</th><th>Location</th><th>Cost Center</th><th className="numeric">Jumlah</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th className="target-col">{isItemTransaction ? 'Item' : 'Akun / Keperluan'}</th><th>Keterangan</th>{isItemTransaction && <><th>Qty</th><th>Satuan</th></>}<th>{isStockUsage ? 'HPP Average' : isItemTransaction ? 'Harga' : 'Nilai'}</th><th>Diskon</th><th>PPN / Pajak</th><th>Location</th><th>Cost Center</th><th className="numeric">Jumlah</th><th></th></tr></thead>
           <tbody>{lines.map((line, index) => {
             const calc = calculation?.lines[index];
             return <tr key={line.key}>
@@ -209,12 +235,12 @@ export function TransactionForm() {
               <td><SearchSelect value={line.targetId} options={targetOptions} placeholder={`Cari ${isItemTransaction ? 'item' : 'akun'}...`} onChange={id => chooseTarget(line, id)} /></td>
               <td><input value={line.description} onChange={e => updateLine(line.key, { description: e.target.value })} placeholder="Keterangan" /></td>
               {isItemTransaction && <><td><input className="number-input short" type="number" step="0.000001" min="0" value={line.quantity} onChange={e => updateLine(line.key, { quantity: e.target.value })} /></td><td><select value={line.unitId} onChange={e => updateLine(line.key, { unitId: e.target.value })}><option value="">—</option>{units.map(x => <option key={x.id} value={x.id}>{x.code}</option>)}</select></td></>}
-              <td><input className="number-input" type="number" step="0.01" min="0" value={line.unitPrice} onChange={e => updateLine(line.key, { unitPrice: e.target.value })} /></td>
-              <td><div className="compact-pair"><select value={line.discountType} onChange={e => updateLine(line.key, { discountType: e.target.value as DiscountMode })}><option value="">—</option><option value="PERCENT">%</option><option value="AMOUNT">Rp</option></select><input className="number-input discount-input" type="number" min="0" step="0.01" value={line.discountValue} onChange={e => updateLine(line.key, { discountValue: e.target.value })} /></div></td>
-              <td><div className="tax-cell"><select value={line.taxCodeId} onChange={e => chooseTax(line, e.target.value)}><option value="">Non PPN</option>{taxes.map(x => <option key={x.id} value={x.id}>{x.code} ({Number(x.rate).toLocaleString('id-ID')}%)</option>)}</select>{line.taxCodeId && <label className="inline-check"><input type="checkbox" checked={line.taxIncluded} onChange={e => updateLine(line.key, { taxIncluded: e.target.checked })}/> Incl.</label>}</div></td>
+              <td>{isStockUsage ? <span className="auto-cost-label">Otomatis</span> : <input className="number-input" type="number" step="0.01" min="0" value={line.unitPrice} onChange={e => updateLine(line.key, { unitPrice: e.target.value })} />}</td>
+              <td>{isStockUsage ? <span className="muted-cell">—</span> : <div className="compact-pair"><select value={line.discountType} onChange={e => updateLine(line.key, { discountType: e.target.value as DiscountMode })}><option value="">—</option><option value="PERCENT">%</option><option value="AMOUNT">Rp</option></select><input className="number-input discount-input" type="number" min="0" step="0.01" value={line.discountValue} onChange={e => updateLine(line.key, { discountValue: e.target.value })} /></div>}</td>
+              <td>{isStockUsage ? <span className="muted-cell">—</span> : <div className="tax-cell"><select value={line.taxCodeId} onChange={e => chooseTax(line, e.target.value)}><option value="">Non PPN</option>{taxes.map(x => <option key={x.id} value={x.id}>{x.code} ({Number(x.rate).toLocaleString('id-ID')}%)</option>)}</select>{line.taxCodeId && <label className="inline-check"><input type="checkbox" checked={line.taxIncluded} onChange={e => updateLine(line.key, { taxIncluded: e.target.checked })}/> Incl.</label>}</div>}</td>
               <td><select value={line.locationId} onChange={e => updateLine(line.key, { locationId: e.target.value })}><option value="">Default</option>{companyLocations.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></td>
               <td><select value={line.costCenterId} onChange={e => updateLine(line.key, { costCenterId: e.target.value })}><option value="">—</option>{costCenters.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></td>
-              <td className="numeric line-total">Rp{money(calc?.lineTotal || 0)}</td>
+              <td className="numeric line-total">{isStockUsage ? 'Saat verifikasi' : `Rp${money(calc?.lineTotal || 0)}`}</td>
               <td><button className="icon-button danger" type="button" title="Hapus baris" onClick={() => setLines(rows => rows.length === 1 ? rows : rows.filter(x => x.key !== line.key))}><Trash2 size={15}/></button></td>
             </tr>;
           })}</tbody>
@@ -222,11 +248,11 @@ export function TransactionForm() {
       </div>
       <div className="transaction-footer">
         <button className="secondary-button" type="button" onClick={() => setLines(rows => [...rows, makeLine()])}><Plus size={16}/> Tambah Baris</button>
-        <div className="document-discount"><span>Diskon Dokumen</span><select value={docDiscountType} onChange={e => setDocDiscountType(e.target.value as DiscountMode)}><option value="">Tidak ada</option><option value="PERCENT">Persen</option><option value="AMOUNT">Nominal</option></select>{docDiscountType && <input className="number-input" type="number" min="0" step="0.01" value={docDiscountValue} onChange={e => setDocDiscountValue(e.target.value)} />}</div>
-        <div className="totals-box"><div><span>Subtotal</span><strong>Rp{money(calculation?.grossAmount || 0)}</strong></div><div><span>Diskon Item</span><strong>- Rp{money(calculation?.lineDiscountAmount || 0)}</strong></div><div><span>Diskon Dokumen</span><strong>- Rp{money(calculation?.documentDiscountAmount || 0)}</strong></div><div><span>DPP</span><strong>Rp{money(calculation?.dppAmount || 0)}</strong></div><div><span>PPN / Pajak</span><strong>Rp{money(calculation?.taxAmount || 0)}</strong></div><div className="grand-total"><span>Grand Total</span><strong>Rp{money(calculation?.grandTotal || 0)}</strong></div></div>
+        {!isStockUsage && <div className="document-discount"><span>Diskon Dokumen</span><select value={docDiscountType} onChange={e => setDocDiscountType(e.target.value as DiscountMode)}><option value="">Tidak ada</option><option value="PERCENT">Persen</option><option value="AMOUNT">Nominal</option></select>{docDiscountType && <input className="number-input" type="number" min="0" step="0.01" value={docDiscountValue} onChange={e => setDocDiscountValue(e.target.value)} />}</div>}
+        {isStockUsage ? <div className="helper-box">HPP tidak diinput manual. Sistem mengambil <strong>Moving Average</strong> per item dan location saat Finance Verified.</div> : <div className="totals-box"><div><span>Subtotal</span><strong>Rp{money(calculation?.grossAmount || 0)}</strong></div><div><span>Diskon Item</span><strong>- Rp{money(calculation?.lineDiscountAmount || 0)}</strong></div><div><span>Diskon Dokumen</span><strong>- Rp{money(calculation?.documentDiscountAmount || 0)}</strong></div><div><span>DPP</span><strong>Rp{money(calculation?.dppAmount || 0)}</strong></div><div><span>PPN / Pajak</span><strong>Rp{money(calculation?.taxAmount || 0)}</strong></div><div className="grand-total"><span>Grand Total</span><strong>Rp{money(calculation?.grandTotal || 0)}</strong></div></div>}
       </div>
     </section>
 
-    <section className="section-card"><div className="section-title"><div><span className="eyebrow">DRAFT TERBARU</span><h3>Transaksi terakhir</h3><p>Satu dokumen dapat membawa banyak item atau banyak akun.</p></div></div><div className="data-table-wrap"><table><thead><tr><th>No Transaksi</th><th>Tanggal</th><th>Jenis</th><th>Location</th><th>Kas / Bank</th><th>Relasi</th><th>Status</th><th className="numeric">Total</th></tr></thead><tbody>{recent.slice(0, 10).map(x => <tr key={x.id}><td><strong>{x.transaction_number}</strong></td><td>{x.transaction_date?.slice(0,10)}</td><td>{transactionLabels[x.transaction_type] || x.transaction_type}</td><td>{x.location_name || '—'}</td><td>{x.financial_account_name || '—'}</td><td>{x.partner_name || '—'}</td><td><span className="status-draft">{x.workflow_status}</span></td><td className="numeric">Rp{money(x.grand_total)}</td></tr>)}</tbody></table>{recent.length === 0 && <div className="empty-state"><Save size={32}/><strong>Belum ada transaksi</strong><span>Simpan draft pertama dari form di atas.</span></div>}</div></section>
+    <section className="section-card"><div className="section-title"><div><span className="eyebrow">TRANSAKSI TERBARU</span><h3>Finance → Accounting</h3><p>Draft diverifikasi Finance untuk membentuk draft jurnal otomatis.</p></div></div><div className="data-table-wrap"><table><thead><tr><th>No Transaksi</th><th>Tanggal</th><th>Jenis</th><th>Location</th><th>Kas / Bank</th><th>Relasi</th><th>Status Finance</th><th>Status Jurnal</th><th className="numeric">Total</th><th></th></tr></thead><tbody>{recent.slice(0, 15).map(x => <tr key={x.id}><td><strong>{x.transaction_number}</strong>{x.journal_number && <small className="journal-meta">{x.journal_number}</small>}</td><td>{x.transaction_date?.slice(0,10)}</td><td>{transactionLabels[x.transaction_type] || x.transaction_type}</td><td>{x.location_name || '—'}</td><td>{x.financial_account_name || '—'}</td><td>{x.partner_name || '—'}</td><td><span className={x.workflow_status === 'DRAFT' ? 'status-draft' : 'status-ok'}>{x.workflow_status}</span></td><td>{x.journal_status ? <span className={x.journal_status === 'POSTED' ? 'status-ok' : 'status-draft'}>{x.journal_status}</span> : '—'}</td><td className="numeric">{x.transaction_type === 'STOCK_USAGE' && x.workflow_status === 'DRAFT' ? 'Auto HPP' : `Rp${money(x.grand_total)}`}</td><td>{canVerify && x.workflow_status === 'DRAFT' && <button className="secondary-button compact" onClick={() => verifyTransaction(x.id)} disabled={verifyingId === x.id}><FileCheck2 size={15}/>{verifyingId === x.id ? 'Verifikasi...' : 'Finance Verified'}</button>}</td></tr>)}</tbody></table>{recent.length === 0 && <div className="empty-state"><Save size={32}/><strong>Belum ada transaksi</strong><span>Simpan draft pertama dari form di atas.</span></div>}</div></section>
   </div>;
 }
