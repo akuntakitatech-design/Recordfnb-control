@@ -61,7 +61,7 @@ const locationLabel: Record<string, string> = {
 const pageTitles: Record<Page, string> = {
   dashboard: 'Dashboard', organization: 'Master Organisasi', items: 'Barang & Inventory', partners: 'Supplier & Relasi',
   purchase: 'Invoice Pembelian', 'cash-out': 'Kas & Bank Keluar', finance: 'Finance & Accounting Master',
-  'coa-standard': 'COA Standard & Mapping', transactions: 'Transaksi', control: 'Accounting Control Center',
+  'coa-standard': 'COA Standard & Mapping', transactions: 'Jurnal / Transaction Engine', control: 'Accounting Control Center',
   access: 'User & Hak Akses', settings: 'Pengaturan',
 };
 
@@ -90,13 +90,17 @@ function Login({ onLogin }: { onLogin: () => void }) {
       <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nama@perusahaan.com" autoFocus/></label>
       <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"/></label>
       {error && <div className="form-error">{error}</div>}
-      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.9 · Development</small>
+      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.9.1 · Development</small>
     </form></section>
   </main>;
 }
 
 function Metric({ icon, value, label }: { icon: React.ReactNode; value: number; label: string }) {
   return <div className="metric-card"><div className="metric-icon">{icon}</div><div><strong>{value}</strong><span>{label}</span></div></div>;
+}
+
+function NavLabel({ children }: { children: React.ReactNode }) {
+  return <span className="nav-group-label">{children}</span>;
 }
 
 export function App() {
@@ -150,21 +154,32 @@ export function App() {
         <button className={active === 'dashboard' ? 'active' : ''} onClick={() => setActive('dashboard')}><Store size={18}/> Dashboard</button>
 
         {canAccounting && <>
+          <NavLabel>Finance Control</NavLabel>
+          <button className={active === 'purchase' ? 'active' : ''} onClick={() => setActive('purchase')}><ReceiptText size={18}/> Invoice Pembelian</button>
+          <button className={active === 'cash-out' ? 'active' : ''} onClick={() => setActive('cash-out')}><CircleDollarSign size={18}/> Kas / Bank Keluar</button>
+
+          <NavLabel>Accounting</NavLabel>
+          <button className={active === 'control' ? 'active' : ''} onClick={() => setActive('control')}><ShieldCheck size={18}/> Control Center</button>
+          <button className={active === 'transactions' ? 'active' : ''} onClick={() => setActive('transactions')}><ReceiptText size={18}/> Jurnal / Engine</button>
+
+          <NavLabel>Master & Setup</NavLabel>
           <button className={active === 'organization' ? 'active' : ''} onClick={() => setActive('organization')}><Building2 size={18}/> Organisasi</button>
           <button className={active === 'items' ? 'active' : ''} onClick={() => setActive('items')}><Boxes size={18}/> Barang & Inventory</button>
           <button className={active === 'finance' ? 'active' : ''} onClick={() => setActive('finance')}><Landmark size={18}/> Finance Master</button>
-          <button className={active === 'coa-standard' ? 'active' : ''} onClick={() => setActive('coa-standard')}><BookOpenCheck size={18}/> COA Standard</button>
-          <button className={active === 'transactions' ? 'active' : ''} onClick={() => setActive('transactions')}><ReceiptText size={18}/> Transaksi Engine</button>
-          <button className={active === 'control' ? 'active' : ''} onClick={() => setActive('control')}><ShieldCheck size={18}/> Control Center</button>
+          <button className={active === 'coa-standard' ? 'active' : ''} onClick={() => setActive('coa-standard')}><BookOpenCheck size={18}/> COA & Mapping</button>
         </>}
 
         {clientOnly && <>
+          <NavLabel>Finance Control</NavLabel>
           <button className={active === 'purchase' ? 'active' : ''} onClick={() => setActive('purchase')}><ReceiptText size={18}/> Invoice Pembelian</button>
           <button className={active === 'cash-out' ? 'active' : ''} onClick={() => setActive('cash-out')}><CircleDollarSign size={18}/> Kas / Bank Keluar</button>
+
+          <NavLabel>Master</NavLabel>
           <button className={active === 'items' ? 'active' : ''} onClick={() => setActive('items')}><Boxes size={18}/> Barang / Item</button>
           <button className={active === 'partners' ? 'active' : ''} onClick={() => setActive('partners')}><UsersRound size={18}/> Supplier & Relasi</button>
         </>}
 
+        <NavLabel>Administrasi</NavLabel>
         {canManageUsers && <button className={active === 'access' ? 'active' : ''} onClick={() => setActive('access')}><Users size={18}/> User & Akses</button>}
         <button className={active === 'settings' ? 'active' : ''} onClick={() => setActive('settings')}><Settings2 size={18}/> Pengaturan</button>
       </nav>
@@ -172,13 +187,13 @@ export function App() {
     </aside>
 
     <section className="content-shell">
-      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.9</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
+      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.9.1</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
       {active === 'dashboard' && <Dashboard summary={summary} setActive={setActive} clientMode={clientOnly}/>} 
       {active === 'organization' && canAccounting && <OrganizationMaster/>}
       {active === 'items' && (clientOnly ? <ClientItemCenter/> : <MasterItemCenter/>)}
       {active === 'partners' && clientOnly && <ClientPartnerCenter/>}
-      {active === 'purchase' && clientOnly && <ClientPurchaseInvoice canVerify={canVerifyTransactions}/>}
-      {active === 'cash-out' && clientOnly && <ClientCashOut canVerify={canVerifyTransactions}/>}
+      {active === 'purchase' && (clientOnly || canAccounting) && <ClientPurchaseInvoice canVerify={canVerifyTransactions}/>}
+      {active === 'cash-out' && (clientOnly || canAccounting) && <ClientCashOut canVerify={canVerifyTransactions}/>}
       {active === 'finance' && canAccounting && <MasterFinanceCenter/>}
       {active === 'coa-standard' && canAccounting && <StandardCoaCenter/>}
       {active === 'transactions' && canAccounting && <TransactionForm canVerify={canVerifyTransactions}/>}
@@ -194,24 +209,21 @@ function Dashboard({ summary, setActive, clientMode }: { summary: Summary | null
     <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL PANEL</span><h1>Catat kegiatan bisnis, bukan jurnal.</h1><p>Kategori, COA, mapping akun dan setup accounting dikelola Akuntakita. Tim client fokus pada administrasi operasional sehari-hari.</p></div><button className="primary-button compact" onClick={() => setActive('cash-out')}>Catat Uang Keluar <ChevronRight size={17}/></button></section>
     <div className="metrics-grid"><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/><Metric icon={<UsersRound/>} value={summary?.partners ?? 0} label="Supplier / Relasi"/></div>
     <section className="section-card"><div className="section-title"><div><span className="eyebrow">ALUR KERJA CLIENT</span><h3>Portal client dibuat sederhana</h3></div></div><div className="foundation-list">
-      <div><b>01</b><span><strong>Invoice Pembelian</strong><small>Supplier, lokasi, barang, qty, harga, pajak dan cara bayar. Tanpa memilih akun/jurnal.</small></span></div>
-      <div><b>02</b><span><strong>Kas / Bank Keluar</strong><small>Dibedakan menjadi Bayar Hutang dan Pengeluaran Operasional. Client tetap tidak memilih COA.</small></span></div>
+      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice Pembelian dan Kas/Bank adalah area kerja harian client. Tidak ada pilihan COA atau jurnal.</small></span></div>
+      <div><b>02</b><span><strong>Master Operasional</strong><small>Client mengelola item dan supplier dari pilihan setup yang sudah disiapkan Akuntakita.</small></span></div>
       <div><b>03</b><span><strong>Pengeluaran Operasional</strong><small>Finance Verified diteruskan ke Akuntakita untuk diarahkan akun sebelum jurnal dibuat.</small></span></div>
       <div><b>04</b><span><strong>Bayar Hutang</strong><small>Pilih supplier dan invoice yang dibayar; Utang Usaha dan Kas/Bank diarahkan otomatis.</small></span></div>
     </div></section>
   </div>;
 
   return <div className="page-content">
-    <section className="hero-panel"><div><span className="eyebrow">PONDASI SISTEM</span><h1>Master rapi, transaksi satu kali.</h1><p>Workspace Akuntakita menyiapkan struktur accounting dan kontrol agar client tinggal menjalankan administrasi bisnisnya.</p></div><button className="primary-button compact" onClick={() => setActive('transactions')}>Coba Engine Transaksi <ChevronRight size={17}/></button></section>
+    <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL + ACCOUNTING</span><h1>Operasional sederhana, accounting tetap terkendali.</h1><p>Finance Control menangkap transaksi bisnis. Accounting Akuntakita mengarahkan, mereview, memposting dan menutup periode tanpa input ulang.</p></div><button className="primary-button compact" onClick={() => setActive('control')}>Buka Accounting Control <ChevronRight size={17}/></button></section>
     <div className="metrics-grid"><Metric icon={<Users/>} value={summary?.workspaces ?? 0} label="Client / Workspace"/><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/></div>
-    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.9</span><h3>Yang sudah hidup</h3></div></div><div className="foundation-list">
-      <div><b>01</b><span><strong>Multi-client, company & location</strong><small>Outlet, Central Kitchen, gudang, HO, production kitchen dan struktur cabang.</small></span></div>
-      <div><b>02</b><span><strong>Akuntakita Setup Workspace</strong><small>COA, kategori barang, mapping akun, kas/bank, pajak, cost center dan akun penting dikendalikan Akuntakita.</small></span></div>
-      <div><b>03</b><span><strong>Client Operational Master</strong><small>Client dapat menambah item serta supplier/customer tanpa mengubah struktur accounting.</small></span></div>
-      <div><b>04</b><span><strong>Invoice Pembelian & Kas/Bank Keluar</strong><small>Pembelian tunai/kredit serta pengeluaran client tanpa client memilih jurnal.</small></span></div>
-      <div><b>05</b><span><strong>User, role & tenant isolation</strong><small>Akses dibatasi per Client, Company dan Location dari API, bukan hanya disembunyikan di tampilan.</small></span></div>
-      <div><b>06</b><span><strong>Standard COA & accounting mapping</strong><small>Template COA F&B generik dengan mapping akun penting, kelompok barang, kelompok aset dan pajak yang editable per company.</small></span></div>
-      <div><b>07</b><span><strong>Accounting judgement tetap di Akuntakita</strong><small>Pengeluaran operasional yang membutuhkan judgement masuk antrean arah akun sebelum review dan posting.</small></span></div>
+    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.9.1</span><h3>Struktur kerja sistem</h3></div></div><div className="foundation-list">
+      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice pembelian, kas/bank, hutang-piutang, penjualan dan persediaan menjadi area transaksi bisnis.</small></span></div>
+      <div><b>02</b><span><strong>Accounting</strong><small>Control Center, arah akun, jurnal, review, posting dan closing dikelola Akuntakita.</small></span></div>
+      <div><b>03</b><span><strong>Master & Setup</strong><small>Organisasi, kategori barang, mapping akun, finance master, pajak dan COA disiapkan Akuntakita.</small></span></div>
+      <div><b>04</b><span><strong>Client tetap sederhana</strong><small>Portal client hanya menampilkan transaksi Finance Control dan master operasional yang memang perlu dikerjakan client.</small></span></div>
     </div></section>
   </div>;
 }
