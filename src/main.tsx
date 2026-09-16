@@ -12,6 +12,7 @@ import './journalCenter.css';
 import './clientPurchase.css';
 import './clientCashOut.css';
 import './clientItemUsage.css';
+import './stockTransfer.css';
 import './menuGroups.css';
 
 createRoot(document.getElementById('root')!).render(
