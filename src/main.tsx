@@ -14,6 +14,7 @@ import './clientCashOut.css';
 import './clientItemUsage.css';
 import './stockTransfer.css';
 import './clientStockOpname.css';
+import './clientSalesImport.css';
 import './menuGroups.css';
 
 createRoot(document.getElementById('root')!).render(
