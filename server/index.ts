@@ -225,7 +225,7 @@ app.use('/api/accounting-cash-outs', accountingCashOutRouter);
 app.use('/api/accounting-cash-ins', accountingCashInRouter);
 
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(rootDir, 'dist'));
+  app.use(express.static(path.join(rootDir, 'dist')));
   app.get('*', (_req, res) => res.sendFile(path.join(rootDir, 'dist', 'index.html')));
 }
 
