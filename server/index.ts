@@ -16,6 +16,8 @@ import { coaTemplateRouter } from './coaTemplateRoutes.js';
 import { journalRouter } from './journalRoutes.js';
 import { clientMasterRouter } from './clientMasterRoutes.js';
 import { clientTransactionRouter } from './clientTransactionRoutes.js';
+import { clientCashOutRouter } from './clientCashOutRoutes.js';
+import { accountingCashOutRouter } from './accountingCashOutRoutes.js';
 import { canWriteCompanyMaster, canWriteWorkspaceMaster, isSystemAdmin } from './access.js';
 
 const app = express();
@@ -209,10 +211,12 @@ app.use('/api/master', masterRouter);
 app.use('/api/master', financeMasterRouter);
 app.use('/api/client-master', clientMasterRouter);
 app.use('/api/client-transactions', clientTransactionRouter);
+app.use('/api/client-transactions', clientCashOutRouter);
 app.use('/api/transactions', transactionRouter);
 app.use('/api/access', accessRouter);
 app.use('/api/master/coa-standard', coaTemplateRouter);
 app.use('/api/journals', journalRouter);
+app.use('/api/accounting-cash-outs', accountingCashOutRouter);
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(rootDir, 'dist')));
