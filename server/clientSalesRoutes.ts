@@ -15,6 +15,13 @@ const num = (value: unknown) => {
   return Number.isFinite(n) ? n : NaN;
 };
 
+type NormalizedSalesRow = {
+  row_no:number; sale_date:string; invoice_number:string; cashier:string|null; sale_type:string|null;
+  item_code:string|null; item_name:string; item_id:string|null; quantity:number; unit_price:number;
+  discount_amount:number; line_total:number; payment_cash:number; payment_qris:number; payment_transfer:number;
+  payment_compliment:number; payment_gofood:number; payment_grabfood:number; metadata:{ sourceRow:number };
+};
+
 async function canOverride(userId: string, companyId: string) {
   const result = await query(
     `SELECT 1 FROM users u WHERE u.id=$1 AND u.status='ACTIVE' AND u.is_system_admin
@@ -77,8 +84,10 @@ clientSalesRouter.get('/sales-context', async (req,res) => {
 clientSalesRouter.get('/sales-batches', async (req,res) => {
   const companyId = text(req.query.companyId);
   if (companyId && !(await canAccessCompany(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN_COMPANY' });
-  const requestedPage = Math.max(1, Number(req.query.page || 1));
-  const pageSize = Math.min(100, Math.max(10, Number(req.query.pageSize || 25)));
+  const pageRaw = Number(req.query.page || 1);
+  const sizeRaw = Number(req.query.pageSize || 25);
+  const requestedPage = Number.isFinite(pageRaw) ? Math.max(1,Math.floor(pageRaw)) : 1;
+  const pageSize = Number.isFinite(sizeRaw) ? Math.min(100,Math.max(10,Math.floor(sizeRaw))) : 25;
   const offset = (requestedPage - 1) * pageSize;
 
   const accessSql = `(
@@ -111,9 +120,8 @@ clientSalesRouter.get('/sales-batches', async (req,res) => {
     ),
   ]);
   const count = total.rows[0]?.count || 0;
-  const pages = Math.max(1, Math.ceil(count / pageSize));
-  const page = Math.min(requestedPage,pages);
-  res.json({ rows:rows.rows, total:count, page, pageSize, pages });
+  const pages = Math.max(1,Math.ceil(count / pageSize));
+  res.json({ rows:rows.rows, total:count, page:requestedPage, pageSize, pages });
 });
 
 clientSalesRouter.post('/sales-batches', async (req,res) => {
@@ -143,49 +151,54 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
   const itemByCode = new Map(sellableItems.rows.map(item => [item.code.toUpperCase(),item]));
   const itemByName = new Map(sellableItems.rows.map(item => [item.name.trim().toLowerCase(),item]));
 
-  const normalizedRows = rawRows.map((row,index) => {
-    const saleDate = text(row.saleDate);
-    const invoiceNumber = text(row.invoiceNumber);
-    const itemCode = upper(row.itemCode);
-    const itemName = text(row.itemName);
-    const quantity = num(row.quantity);
-    const unitPrice = num(row.unitPrice);
-    const discountAmount = num(row.discountAmount);
-    const lineTotal = num(row.lineTotal);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(saleDate) || !invoiceNumber || !itemName || !Number.isFinite(quantity) || quantity <= 0 ||
-        !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(discountAmount) || discountAmount < 0 || !Number.isFinite(lineTotal) || lineTotal < 0) {
-      throw new Error(`INVALID_SALES_ROW_${index + 1}`);
-    }
+  let normalizedRows: NormalizedSalesRow[];
+  try {
+    normalizedRows = rawRows.map((row,index) => {
+      const saleDate = text(row.saleDate);
+      const invoiceNumber = text(row.invoiceNumber);
+      const itemCode = upper(row.itemCode);
+      const itemName = text(row.itemName);
+      const quantity = num(row.quantity);
+      const unitPrice = num(row.unitPrice);
+      const discountAmount = num(row.discountAmount);
+      const lineTotal = num(row.lineTotal);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(saleDate) || !invoiceNumber || !itemName || !Number.isFinite(quantity) || quantity <= 0 ||
+          !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(discountAmount) || discountAmount < 0 || !Number.isFinite(lineTotal) || lineTotal < 0) {
+        throw new Error(`INVALID_SALES_ROW_${index + 1}`);
+      }
 
-    const requestedItemId = text(row.itemId);
-    const matched = requestedItemId ? itemById.get(requestedItemId) : (itemByCode.get(itemCode) || itemByName.get(itemName.trim().toLowerCase()));
-    if (requestedItemId && !matched) throw new Error(`ITEM_OUTSIDE_WORKSPACE_ROW_${index + 1}`);
+      const requestedItemId = text(row.itemId);
+      const matched = requestedItemId ? itemById.get(requestedItemId) : (itemByCode.get(itemCode) || itemByName.get(itemName.trim().toLowerCase()));
+      if (requestedItemId && !matched) throw new Error(`ITEM_OUTSIDE_WORKSPACE_ROW_${index + 1}`);
 
-    const payments = [row.cash,row.qris,row.transfer,row.compliment,row.gofood,row.grabfood].map(num);
-    if (payments.some(value => !Number.isFinite(value) || value < 0)) throw new Error(`INVALID_PAYMENT_ROW_${index + 1}`);
+      const payments = [row.cash,row.qris,row.transfer,row.compliment,row.gofood,row.grabfood].map(num);
+      if (payments.some(value => !Number.isFinite(value) || value < 0)) throw new Error(`INVALID_PAYMENT_ROW_${index + 1}`);
 
-    return {
-      row_no:index+1,
-      sale_date:saleDate,
-      invoice_number:invoiceNumber,
-      cashier:nullable(row.cashier),
-      sale_type:nullable(row.saleType),
-      item_code:itemCode || null,
-      item_name:itemName,
-      item_id:matched?.id || null,
-      quantity,
-      unit_price:unitPrice,
-      discount_amount:discountAmount,
-      line_total:lineTotal,
-      payment_cash:payments[0],
-      payment_qris:payments[1],
-      payment_transfer:payments[2],
-      payment_compliment:payments[3],
-      payment_gofood:payments[4],
-      payment_grabfood:payments[5],
-      metadata:{ sourceRow:index+1 },
-    };
-  });
+      return {
+        row_no:index+1,
+        sale_date:saleDate,
+        invoice_number:invoiceNumber,
+        cashier:nullable(row.cashier),
+        sale_type:nullable(row.saleType),
+        item_code:itemCode || null,
+        item_name:itemName,
+        item_id:matched?.id || null,
+        quantity,
+        unit_price:unitPrice,
+        discount_amount:discountAmount,
+        line_total:lineTotal,
+        payment_cash:payments[0],
+        payment_qris:payments[1],
+        payment_transfer:payments[2],
+        payment_compliment:payments[3],
+        payment_gofood:payments[4],
+        payment_grabfood:payments[5],
+        metadata:{ sourceRow:index+1 },
+      };
+    });
+  } catch (error) {
+    return res.status(400).json({ error:error instanceof Error ? error.message : 'INVALID_SALES_BATCH' });
+  }
 
   const firstDate = normalizedRows[0]?.sale_date;
   if (!firstDate) return res.status(400).json({ error:'VALID_SALE_DATE_REQUIRED' });
