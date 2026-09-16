@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
+import { canAccessLocation, canCreateTransaction, hasUnrestrictedLocationAccess } from './access.js';
 import { calculateDocument, type DocumentDiscount, type TransactionLineInput } from '../shared/transactionMath.js';
 
 export const transactionRouter = Router();
@@ -40,7 +41,14 @@ transactionRouter.get('/recent', async (req, res) => {
        LEFT JOIN locations l ON l.id=t.location_id
        LEFT JOIN financial_accounts fa ON fa.id=t.financial_account_id
       WHERE ($1='' OR t.company_id=$1::uuid)
-      ORDER BY t.created_at DESC LIMIT 50`, [companyId],
+        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+          OR EXISTS (
+            SELECT 1 FROM workspace_memberships wm
+             WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE'
+               AND (wm.company_id IS NULL OR wm.company_id=t.company_id)
+               AND (wm.location_id IS NULL OR wm.location_id=t.location_id)
+          ))
+      ORDER BY t.created_at DESC LIMIT 50`, [companyId, req.sessionUser!.id],
   );
   res.json(result.rows);
 });
@@ -58,14 +66,39 @@ transactionRouter.post('/drafts', async (req, res) => {
   if (!companyId || !transactionType || !/^\d{4}-\d{2}-\d{2}$/.test(transactionDate)) return res.status(400).json({ error: 'TRANSACTION_HEADER_REQUIRED' });
   if (!rawLines.length) return res.status(400).json({ error: 'TRANSACTION_LINES_REQUIRED' });
   if ((transactionType === 'CASH_OUT' || transactionType === 'CASH_IN') && !financialAccountId) return res.status(400).json({ error: 'FINANCIAL_ACCOUNT_REQUIRED' });
+  if (!(await canCreateTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
 
-  const company = await query<{ workspace_id: string }>('SELECT workspace_id FROM companies WHERE id=$1', [companyId]);
+  const company = await query<{ workspace_id: string }>('SELECT workspace_id FROM companies WHERE id=$1 AND status=\'ACTIVE\'', [companyId]);
   if (!company.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
   const workspaceId = company.rows[0].workspace_id;
 
+  const unrestrictedLocation = await hasUnrestrictedLocationAccess(req.sessionUser!.id, companyId);
+  if (!locationId && !unrestrictedLocation) return res.status(400).json({ error: 'LOCATION_REQUIRED_FOR_USER_SCOPE' });
+  if (locationId) {
+    const location = await query('SELECT id FROM locations WHERE id=$1 AND company_id=$2 AND status=\'ACTIVE\'', [locationId, companyId]);
+    if (!location.rowCount) return res.status(400).json({ error: 'LOCATION_OUTSIDE_COMPANY' });
+    if (!(await canAccessLocation(req.sessionUser!.id, locationId))) return res.status(403).json({ error: 'LOCATION_FORBIDDEN' });
+  }
+
+  const lineLocationIds = [...new Set(rawLines.map((line: any) => nullable(line.locationId)).filter(Boolean))] as string[];
+  for (const lineLocationId of lineLocationIds) {
+    const location = await query('SELECT id FROM locations WHERE id=$1 AND company_id=$2 AND status=\'ACTIVE\'', [lineLocationId, companyId]);
+    if (!location.rowCount) return res.status(400).json({ error: 'LINE_LOCATION_OUTSIDE_COMPANY' });
+    if (!(await canAccessLocation(req.sessionUser!.id, lineLocationId))) return res.status(403).json({ error: 'LINE_LOCATION_FORBIDDEN' });
+  }
+
+  if (partnerId) {
+    const partner = await query('SELECT id FROM business_partners WHERE id=$1 AND workspace_id=$2', [partnerId, workspaceId]);
+    if (!partner.rowCount) return res.status(400).json({ error: 'PARTNER_OUTSIDE_WORKSPACE' });
+  }
+
   if (financialAccountId) {
-    const fa = await query('SELECT id FROM financial_accounts WHERE id=$1 AND company_id=$2', [financialAccountId, companyId]);
+    const fa = await query('SELECT id,location_id FROM financial_accounts WHERE id=$1 AND company_id=$2', [financialAccountId, companyId]);
     if (!fa.rowCount) return res.status(400).json({ error: 'INVALID_FINANCIAL_ACCOUNT' });
+    const accountLocationId = fa.rows[0].location_id as string | null;
+    if (accountLocationId && !(await canAccessLocation(req.sessionUser!.id, accountLocationId))) {
+      return res.status(403).json({ error: 'FINANCIAL_ACCOUNT_FORBIDDEN' });
+    }
   }
 
   const taxIds = [...new Set(rawLines.map((line: any) => nullable(line.taxCodeId)).filter(Boolean))] as string[];
@@ -127,6 +160,14 @@ transactionRouter.post('/drafts', async (req, res) => {
       const accountId = nullable(line.accountId);
       if (lineType === 'ITEM' && !itemId) throw new Error(`ITEM_REQUIRED_LINE_${index + 1}`);
       if (lineType === 'ACCOUNT' && !accountId) throw new Error(`ACCOUNT_REQUIRED_LINE_${index + 1}`);
+      if (itemId) {
+        const item = await client.query('SELECT id FROM items WHERE id=$1 AND workspace_id=$2', [itemId, workspaceId]);
+        if (!item.rowCount) throw new Error(`ITEM_OUTSIDE_WORKSPACE_LINE_${index + 1}`);
+      }
+      if (accountId) {
+        const account = await client.query('SELECT id FROM chart_of_accounts WHERE id=$1 AND company_id=$2', [accountId, companyId]);
+        if (!account.rowCount) throw new Error(`ACCOUNT_OUTSIDE_COMPANY_LINE_${index + 1}`);
+      }
       const discountType = line.discountType === 'PERCENT' || line.discountType === 'AMOUNT' ? line.discountType : null;
       const discountPercent = discountType === 'PERCENT' ? Number(line.discountValue || 0) : 0;
       await client.query(
