@@ -14,6 +14,7 @@ import { transactionRouter } from './transactionRoutes.js';
 import { accessRouter } from './accessRoutes.js';
 import { coaTemplateRouter } from './coaTemplateRoutes.js';
 import { journalRouter } from './journalRoutes.js';
+import { clientMasterRouter } from './clientMasterRoutes.js';
 import { canWriteCompanyMaster, canWriteWorkspaceMaster, isSystemAdmin } from './access.js';
 
 const app = express();
@@ -205,6 +206,7 @@ app.post('/api/master/locations', requireAuth, async (req, res) => {
 
 app.use('/api/master', masterRouter);
 app.use('/api/master', financeMasterRouter);
+app.use('/api/client-master', clientMasterRouter);
 app.use('/api/transactions', transactionRouter);
 app.use('/api/access', accessRouter);
 app.use('/api/master/coa-standard', coaTemplateRouter);
