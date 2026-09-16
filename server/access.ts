@@ -1,10 +1,17 @@
 import { query } from './db.js';
 
-const masterWriterRoles = new Set([
+const accountingSetupRoles = new Set([
+  'AK_SUPER_ADMIN',
+  'AK_ACCOUNTING_REVIEWER',
+  'AK_ACCOUNTING_STAFF',
+]);
+
+const operationalMasterWriterRoles = new Set([
   'AK_SUPER_ADMIN',
   'AK_ACCOUNTING_REVIEWER',
   'AK_ACCOUNTING_STAFF',
   'CLIENT_FINANCE_MANAGER',
+  'CLIENT_FINANCE_STAFF',
 ]);
 
 const transactionWriterRoles = new Set([
@@ -130,12 +137,19 @@ export async function hasCompanyRole(userId: string, companyId: string, allowedR
   return Boolean(result.rowCount);
 }
 
+// Accounting/setup masters are intentionally owned by Akuntakita.
+// Client users consume these masters but do not change their accounting structure.
 export async function canWriteWorkspaceMaster(userId: string, workspaceId: string) {
-  return hasWorkspaceRole(userId, workspaceId, masterWriterRoles);
+  return hasWorkspaceRole(userId, workspaceId, accountingSetupRoles);
 }
 
 export async function canWriteCompanyMaster(userId: string, companyId: string) {
-  return hasCompanyRole(userId, companyId, masterWriterRoles);
+  return hasCompanyRole(userId, companyId, accountingSetupRoles);
+}
+
+// Operational masters such as item and supplier may be created by the client finance team.
+export async function canWriteOperationalWorkspaceMaster(userId: string, workspaceId: string) {
+  return hasWorkspaceRole(userId, workspaceId, operationalMasterWriterRoles);
 }
 
 export async function canCreateTransaction(userId: string, companyId: string) {
