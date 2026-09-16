@@ -12,6 +12,8 @@ import { masterRouter } from './masterRoutes.js';
 import { financeMasterRouter } from './financeMasterRoutes.js';
 import { transactionRouter } from './transactionRoutes.js';
 import { accessRouter } from './accessRoutes.js';
+import { coaTemplateRouter } from './coaTemplateRoutes.js';
+import { journalRouter } from './journalRoutes.js';
 import { canWriteCompanyMaster, canWriteWorkspaceMaster, isSystemAdmin } from './access.js';
 
 const app = express();
@@ -55,15 +57,9 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   const currentPassword = String(req.body?.currentPassword || '');
   const newPassword = String(req.body?.newPassword || '');
 
-  if (!currentPassword || !newPassword) {
-    return res.status(400).json({ error: 'CURRENT_AND_NEW_PASSWORD_REQUIRED' });
-  }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: 'NEW_PASSWORD_TOO_SHORT' });
-  }
-  if (currentPassword === newPassword) {
-    return res.status(400).json({ error: 'NEW_PASSWORD_MUST_BE_DIFFERENT' });
-  }
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'CURRENT_AND_NEW_PASSWORD_REQUIRED' });
+  if (newPassword.length < 8) return res.status(400).json({ error: 'NEW_PASSWORD_TOO_SHORT' });
+  if (currentPassword === newPassword) return res.status(400).json({ error: 'NEW_PASSWORD_MUST_BE_DIFFERENT' });
 
   const result = await query<{ id: string; email: string; full_name: string; password_hash: string; status: string }>(
     'SELECT id,email,full_name,password_hash,status FROM users WHERE id=$1 LIMIT 1',
@@ -96,15 +92,8 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
   if (!userResult.rowCount) return res.status(401).json({ error: 'USER_INACTIVE' });
 
   const memberships = await query<{
-    workspace_id: string;
-    workspace_name: string;
-    company_id: string | null;
-    company_name: string | null;
-    location_id: string | null;
-    location_name: string | null;
-    role_code: string;
-    role_name: string;
-    side: string;
+    workspace_id: string; workspace_name: string; company_id: string | null; company_name: string | null;
+    location_id: string | null; location_name: string | null; role_code: string; role_name: string; side: string;
   }>(
     `SELECT wm.workspace_id, w.name workspace_name, wm.company_id, c.name company_name,
             wm.location_id, l.name location_name, r.code role_code, r.name role_name, r.side
@@ -123,12 +112,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
 app.get('/api/foundation/summary', requireAuth, async (req, res) => {
   const userId = req.sessionUser!.id;
   const result = await query<{
-    workspaces: number;
-    companies: number;
-    locations: number;
-    items: number;
-    partners: number;
-    transactions: number;
+    workspaces: number; companies: number; locations: number; items: number; partners: number; transactions: number;
   }>(`SELECT
        (SELECT COUNT(*)::int FROM workspaces w
          WHERE EXISTS (SELECT 1 FROM users u WHERE u.id=$1 AND u.is_system_admin AND u.status='ACTIVE')
@@ -153,12 +137,10 @@ app.get('/api/foundation/summary', requireAuth, async (req, res) => {
 
 app.get('/api/master/workspaces', requireAuth, async (req, res) => {
   const result = await query(
-    `SELECT w.id,w.code,w.name,w.status
-       FROM workspaces w
+    `SELECT w.id,w.code,w.name,w.status FROM workspaces w
       WHERE EXISTS (SELECT 1 FROM users u WHERE u.id=$1 AND u.is_system_admin AND u.status='ACTIVE')
          OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$1 AND wm.workspace_id=w.id AND wm.status='ACTIVE')
-      ORDER BY w.name`,
-    [req.sessionUser!.id],
+      ORDER BY w.name`, [req.sessionUser!.id],
   );
   res.json(result.rows);
 });
@@ -168,11 +150,7 @@ app.post('/api/master/workspaces', requireAuth, async (req, res) => {
   const code = String(req.body?.code || '').trim().toUpperCase();
   const name = String(req.body?.name || '').trim();
   if (!code || !name) return res.status(400).json({ error: 'CODE_NAME_REQUIRED' });
-  const result = await query(
-    `INSERT INTO workspaces(code,name) VALUES($1,$2)
-     RETURNING id,code,name,status`,
-    [code, name],
-  );
+  const result = await query(`INSERT INTO workspaces(code,name) VALUES($1,$2) RETURNING id,code,name,status`, [code, name]);
   res.status(201).json(result.rows[0]);
 });
 
@@ -182,8 +160,7 @@ app.get('/api/master/companies', requireAuth, async (req, res) => {
        FROM companies c JOIN workspaces w ON w.id=c.workspace_id
       WHERE EXISTS (SELECT 1 FROM users u WHERE u.id=$1 AND u.is_system_admin AND u.status='ACTIVE')
          OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$1 AND wm.workspace_id=c.workspace_id AND wm.status='ACTIVE' AND (wm.company_id IS NULL OR wm.company_id=c.id))
-      ORDER BY w.name,c.name`,
-    [req.sessionUser!.id],
+      ORDER BY w.name,c.name`, [req.sessionUser!.id],
   );
   res.json(result.rows);
 });
@@ -194,11 +171,7 @@ app.post('/api/master/companies', requireAuth, async (req, res) => {
   const name = String(req.body?.name || '').trim();
   if (!workspaceId || !code || !name) return res.status(400).json({ error: 'WORKSPACE_CODE_NAME_REQUIRED' });
   if (!(await canWriteWorkspaceMaster(req.sessionUser!.id, workspaceId))) return res.status(403).json({ error: 'FORBIDDEN' });
-  const result = await query(
-    `INSERT INTO companies(workspace_id,code,name) VALUES($1,$2,$3)
-     RETURNING id,workspace_id,code,name,status`,
-    [workspaceId, code, name],
-  );
+  const result = await query(`INSERT INTO companies(workspace_id,code,name) VALUES($1,$2,$3) RETURNING id,workspace_id,code,name,status`, [workspaceId, code, name]);
   res.status(201).json(result.rows[0]);
 });
 
@@ -208,8 +181,7 @@ app.get('/api/master/locations', requireAuth, async (req, res) => {
        FROM locations l JOIN companies c ON c.id=l.company_id
       WHERE EXISTS (SELECT 1 FROM users u WHERE u.id=$1 AND u.is_system_admin AND u.status='ACTIVE')
          OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$1 AND wm.workspace_id=l.workspace_id AND wm.status='ACTIVE' AND (wm.company_id IS NULL OR wm.company_id=l.company_id) AND (wm.location_id IS NULL OR wm.location_id=l.id))
-      ORDER BY c.name,l.name`,
-    [req.sessionUser!.id],
+      ORDER BY c.name,l.name`, [req.sessionUser!.id],
   );
   res.json(result.rows);
 });
@@ -225,8 +197,7 @@ app.post('/api/master/locations', requireAuth, async (req, res) => {
   if (!ws.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
   const result = await query(
     `INSERT INTO locations(workspace_id,company_id,code,name,location_type)
-     VALUES($1,$2,$3,$4,$5)
-     RETURNING id,company_id,code,name,location_type,status`,
+     VALUES($1,$2,$3,$4,$5) RETURNING id,company_id,code,name,location_type,status`,
     [ws.rows[0].workspace_id, companyId, code, name, locationType],
   );
   res.status(201).json(result.rows[0]);
@@ -236,6 +207,8 @@ app.use('/api/master', masterRouter);
 app.use('/api/master', financeMasterRouter);
 app.use('/api/transactions', transactionRouter);
 app.use('/api/access', accessRouter);
+app.use('/api/coa', coaTemplateRouter);
+app.use('/api/journals', journalRouter);
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(rootDir, 'dist')));
