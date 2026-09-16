@@ -14,7 +14,9 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - fnb_staging
+      fnb_staging:
+        aliases:
+          - fnb-staging-db
 
   app:
     build:
