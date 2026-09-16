@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, Eye, FileCheck2, Landmark, RefreshCw } from 'lucide-react';
 import { api } from './api';
 import { AccountingCashOutQueue } from './AccountingCashOutQueue';
+import { AccountingCashInQueue } from './AccountingCashInQueue';
 
 type Company = { id: string; name: string };
 type JournalRow = {
@@ -68,6 +69,7 @@ export function JournalCenter({ canReview, canPost }: { canReview: boolean; canP
   useEffect(() => { if (companyId) { setDetail(null); void loadJournals(companyId); } }, [companyId]);
 
   return <div className="page-content journal-center">
+    {canReview && <AccountingCashInQueue companyId={companyId} onJournalCreated={() => { setMessage('Akun penerimaan sudah diarahkan dan draft jurnal berhasil dibuat.'); void loadJournals(); }}/>} 
     {canReview && <AccountingCashOutQueue companyId={companyId} onJournalCreated={() => { setMessage('Akun pengeluaran sudah diarahkan dan draft jurnal berhasil dibuat.'); void loadJournals(); }}/>} 
 
     <section className="section-card">
