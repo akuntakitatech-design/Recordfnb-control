@@ -15,6 +15,7 @@ import { accessRouter } from './accessRoutes.js';
 import { coaTemplateRouter } from './coaTemplateRoutes.js';
 import { journalRouter } from './journalRoutes.js';
 import { clientMasterRouter } from './clientMasterRoutes.js';
+import { clientTransactionRouter } from './clientTransactionRoutes.js';
 import { canWriteCompanyMaster, canWriteWorkspaceMaster, isSystemAdmin } from './access.js';
 
 const app = express();
@@ -22,7 +23,7 @@ const port = Number(process.env.PORT || 3000);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '8mb' }));
 app.use(cookieParser());
 
 app.get('/api/health', async (_req, res) => {
@@ -207,6 +208,7 @@ app.post('/api/master/locations', requireAuth, async (req, res) => {
 app.use('/api/master', masterRouter);
 app.use('/api/master', financeMasterRouter);
 app.use('/api/client-master', clientMasterRouter);
+app.use('/api/client-transactions', clientTransactionRouter);
 app.use('/api/transactions', transactionRouter);
 app.use('/api/access', accessRouter);
 app.use('/api/master/coa-standard', coaTemplateRouter);
