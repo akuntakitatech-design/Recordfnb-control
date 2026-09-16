@@ -29,6 +29,7 @@ import { JournalCenter } from './JournalCenter';
 import { ClientItemCenter } from './ClientItemCenter';
 import { ClientPartnerCenter } from './ClientPartnerCenter';
 import { ClientPurchaseInvoice } from './ClientPurchaseInvoice';
+import { ClientCashIn } from './ClientCashIn';
 import { ClientCashOut } from './ClientCashOut';
 
 type Session = {
@@ -50,7 +51,7 @@ type Summary = { workspaces: number; companies: number; locations: number; items
 type Workspace = { id: string; code: string; name: string; status: string };
 type Company = { id: string; workspace_id: string; code: string; name: string; status: string; workspace_name?: string };
 type Location = { id: string; company_id: string; code: string; name: string; location_type: string; status: string; company_name?: string };
-type Page = 'dashboard' | 'organization' | 'items' | 'partners' | 'purchase' | 'cash-out' | 'finance' | 'coa-standard' | 'transactions' | 'control' | 'access' | 'settings';
+type Page = 'dashboard' | 'organization' | 'items' | 'partners' | 'purchase' | 'cash-in' | 'cash-out' | 'finance' | 'coa-standard' | 'transactions' | 'control' | 'access' | 'settings';
 type OrganizationTab = 'workspace' | 'company' | 'location';
 
 const locationLabel: Record<string, string> = {
@@ -60,7 +61,7 @@ const locationLabel: Record<string, string> = {
 
 const pageTitles: Record<Page, string> = {
   dashboard: 'Dashboard', organization: 'Master Organisasi', items: 'Barang & Inventory', partners: 'Supplier & Relasi',
-  purchase: 'Invoice Pembelian', 'cash-out': 'Kas & Bank Keluar', finance: 'Finance & Accounting Master',
+  purchase: 'Invoice Pembelian', 'cash-in': 'Kas & Bank Masuk', 'cash-out': 'Kas & Bank Keluar', finance: 'Finance & Accounting Master',
   'coa-standard': 'COA Standard & Mapping', transactions: 'Jurnal / Transaction Engine', control: 'Accounting Control Center',
   access: 'User & Hak Akses', settings: 'Pengaturan',
 };
@@ -90,7 +91,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
       <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nama@perusahaan.com" autoFocus/></label>
       <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"/></label>
       {error && <div className="form-error">{error}</div>}
-      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.9.1 · Development</small>
+      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.10 · Development</small>
     </form></section>
   </main>;
 }
@@ -156,6 +157,7 @@ export function App() {
         {canAccounting && <>
           <NavLabel>Finance Control</NavLabel>
           <button className={active === 'purchase' ? 'active' : ''} onClick={() => setActive('purchase')}><ReceiptText size={18}/> Invoice Pembelian</button>
+          <button className={active === 'cash-in' ? 'active' : ''} onClick={() => setActive('cash-in')}><CircleDollarSign size={18}/> Kas / Bank Masuk</button>
           <button className={active === 'cash-out' ? 'active' : ''} onClick={() => setActive('cash-out')}><CircleDollarSign size={18}/> Kas / Bank Keluar</button>
 
           <NavLabel>Accounting</NavLabel>
@@ -172,6 +174,7 @@ export function App() {
         {clientOnly && <>
           <NavLabel>Finance Control</NavLabel>
           <button className={active === 'purchase' ? 'active' : ''} onClick={() => setActive('purchase')}><ReceiptText size={18}/> Invoice Pembelian</button>
+          <button className={active === 'cash-in' ? 'active' : ''} onClick={() => setActive('cash-in')}><CircleDollarSign size={18}/> Kas / Bank Masuk</button>
           <button className={active === 'cash-out' ? 'active' : ''} onClick={() => setActive('cash-out')}><CircleDollarSign size={18}/> Kas / Bank Keluar</button>
 
           <NavLabel>Master</NavLabel>
@@ -187,12 +190,13 @@ export function App() {
     </aside>
 
     <section className="content-shell">
-      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.9.1</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
+      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.10</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
       {active === 'dashboard' && <Dashboard summary={summary} setActive={setActive} clientMode={clientOnly}/>} 
       {active === 'organization' && canAccounting && <OrganizationMaster/>}
       {active === 'items' && (clientOnly ? <ClientItemCenter/> : <MasterItemCenter/>)}
       {active === 'partners' && clientOnly && <ClientPartnerCenter/>}
       {active === 'purchase' && (clientOnly || canAccounting) && <ClientPurchaseInvoice canVerify={canVerifyTransactions}/>}
+      {active === 'cash-in' && (clientOnly || canAccounting) && <ClientCashIn canVerify={canVerifyTransactions}/>}
       {active === 'cash-out' && (clientOnly || canAccounting) && <ClientCashOut canVerify={canVerifyTransactions}/>}
       {active === 'finance' && canAccounting && <MasterFinanceCenter/>}
       {active === 'coa-standard' && canAccounting && <StandardCoaCenter/>}
@@ -206,12 +210,12 @@ export function App() {
 
 function Dashboard({ summary, setActive, clientMode }: { summary: Summary | null; setActive: (v: Page) => void; clientMode:boolean }) {
   if (clientMode) return <div className="page-content">
-    <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL PANEL</span><h1>Catat kegiatan bisnis, bukan jurnal.</h1><p>Kategori, COA, mapping akun dan setup accounting dikelola Akuntakita. Tim client fokus pada administrasi operasional sehari-hari.</p></div><button className="primary-button compact" onClick={() => setActive('cash-out')}>Catat Uang Keluar <ChevronRight size={17}/></button></section>
+    <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL PANEL</span><h1>Catat kegiatan bisnis, bukan jurnal.</h1><p>Kategori, COA, mapping akun dan setup accounting dikelola Akuntakita. Tim client fokus pada administrasi operasional sehari-hari.</p></div><button className="primary-button compact" onClick={() => setActive('cash-in')}>Catat Uang Masuk <ChevronRight size={17}/></button></section>
     <div className="metrics-grid"><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/><Metric icon={<UsersRound/>} value={summary?.partners ?? 0} label="Supplier / Relasi"/></div>
     <section className="section-card"><div className="section-title"><div><span className="eyebrow">ALUR KERJA CLIENT</span><h3>Portal client dibuat sederhana</h3></div></div><div className="foundation-list">
-      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice Pembelian dan Kas/Bank adalah area kerja harian client. Tidak ada pilihan COA atau jurnal.</small></span></div>
+      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice Pembelian, Kas/Bank Masuk dan Kas/Bank Keluar adalah area kerja harian client. Tidak ada pilihan COA atau jurnal.</small></span></div>
       <div><b>02</b><span><strong>Master Operasional</strong><small>Client mengelola item dan supplier dari pilihan setup yang sudah disiapkan Akuntakita.</small></span></div>
-      <div><b>03</b><span><strong>Pengeluaran Operasional</strong><small>Finance Verified diteruskan ke Akuntakita untuk diarahkan akun sebelum jurnal dibuat.</small></span></div>
+      <div><b>03</b><span><strong>Penerimaan & Pengeluaran</strong><small>Transaksi yang membutuhkan judgement diarahkan ke Akuntakita setelah Finance Verified.</small></span></div>
       <div><b>04</b><span><strong>Bayar Hutang</strong><small>Pilih supplier dan invoice yang dibayar; Utang Usaha dan Kas/Bank diarahkan otomatis.</small></span></div>
     </div></section>
   </div>;
@@ -219,8 +223,8 @@ function Dashboard({ summary, setActive, clientMode }: { summary: Summary | null
   return <div className="page-content">
     <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL + ACCOUNTING</span><h1>Operasional sederhana, accounting tetap terkendali.</h1><p>Finance Control menangkap transaksi bisnis. Accounting Akuntakita mengarahkan, mereview, memposting dan menutup periode tanpa input ulang.</p></div><button className="primary-button compact" onClick={() => setActive('control')}>Buka Accounting Control <ChevronRight size={17}/></button></section>
     <div className="metrics-grid"><Metric icon={<Users/>} value={summary?.workspaces ?? 0} label="Client / Workspace"/><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/></div>
-    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.9.1</span><h3>Struktur kerja sistem</h3></div></div><div className="foundation-list">
-      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice pembelian, kas/bank, hutang-piutang, penjualan dan persediaan menjadi area transaksi bisnis.</small></span></div>
+    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.10</span><h3>Struktur kerja sistem</h3></div></div><div className="foundation-list">
+      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice pembelian, kas/bank masuk-keluar, hutang-piutang, penjualan dan persediaan menjadi area transaksi bisnis.</small></span></div>
       <div><b>02</b><span><strong>Accounting</strong><small>Control Center, arah akun, jurnal, review, posting dan closing dikelola Akuntakita.</small></span></div>
       <div><b>03</b><span><strong>Master & Setup</strong><small>Organisasi, kategori barang, mapping akun, finance master, pajak dan COA disiapkan Akuntakita.</small></span></div>
       <div><b>04</b><span><strong>Client tetap sederhana</strong><small>Portal client hanya menampilkan transaksi Finance Control dan master operasional yang memang perlu dikerjakan client.</small></span></div>
