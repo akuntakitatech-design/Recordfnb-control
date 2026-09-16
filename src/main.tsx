@@ -11,6 +11,7 @@ import './standardCoa.css';
 import './journalCenter.css';
 import './clientPurchase.css';
 import './clientCashOut.css';
+import './clientItemUsage.css';
 import './menuGroups.css';
 
 createRoot(document.getElementById('root')!).render(
