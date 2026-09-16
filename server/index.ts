@@ -77,7 +77,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   await query('UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2', [passwordHash, user.id]);
   await query(
     `INSERT INTO audit_logs(user_id,entity_type,entity_id,action,after_data)
-     VALUES($1,'USER',$1,'PASSWORD_CHANGE',$2::jsonb)`,
+     VALUES($1::uuid,'USER',$1::text,'PASSWORD_CHANGE',$2::jsonb)`,
     [user.id, JSON.stringify({ changedAt: new Date().toISOString() })],
   );
 
