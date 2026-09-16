@@ -13,6 +13,7 @@ import './clientPurchase.css';
 import './clientCashOut.css';
 import './clientItemUsage.css';
 import './stockTransfer.css';
+import './clientStockOpname.css';
 import './menuGroups.css';
 
 createRoot(document.getElementById('root')!).render(

@@ -56,7 +56,8 @@ coaTemplateRouter.get('/company/:companyId/mappings', async (req, res) => {
                   m.inventory_account_id,ai.code inventory_account_code,ai.name inventory_account_name,
                   m.cogs_account_id,ac.code cogs_account_code,ac.name cogs_account_name,
                   m.sales_account_id,asales.code sales_account_code,asales.name sales_account_name,
-                  m.usage_account_id,au.code usage_account_code,au.name usage_account_name
+                  m.usage_account_id,au.code usage_account_code,au.name usage_account_name,
+                  m.stock_adjustment_account_id,asa.code stock_adjustment_account_code,asa.name stock_adjustment_account_name
              FROM item_categories c
              JOIN companies co ON co.workspace_id=c.workspace_id AND co.id=$1
              LEFT JOIN item_category_account_mappings m ON m.company_id=co.id AND m.category_id=c.id
@@ -64,6 +65,7 @@ coaTemplateRouter.get('/company/:companyId/mappings', async (req, res) => {
              LEFT JOIN chart_of_accounts ac ON ac.id=m.cogs_account_id
              LEFT JOIN chart_of_accounts asales ON asales.id=m.sales_account_id
              LEFT JOIN chart_of_accounts au ON au.id=m.usage_account_id
+             LEFT JOIN chart_of_accounts asa ON asa.id=m.stock_adjustment_account_id
             WHERE c.status='ACTIVE'
             ORDER BY c.name`, [companyId]),
     query(`SELECT c.id category_id,c.code category_code,c.name category_name,
@@ -132,7 +134,6 @@ coaTemplateRouter.post('/templates/:templateId/apply', async (req, res) => {
       `SELECT COUNT(*)::int count FROM chart_of_accounts WHERE company_id=$1`, [companyId],
     );
 
-    // Important accounts: create defaults once, never overwrite user edits when template is re-applied.
     await client.query(
       `INSERT INTO important_accounts(workspace_id,company_id,role_code,account_id)
        SELECT $1,$2,m.role_code,coa.id
@@ -143,7 +144,6 @@ coaTemplateRouter.post('/templates/:templateId/apply', async (req, res) => {
       [workspaceId, companyId, templateId],
     );
 
-    // Create generic F&B item categories and attach accounting defaults per company.
     await client.query(
       `INSERT INTO item_categories(workspace_id,code,name,category_type)
        SELECT $1,m.category_code,m.category_name,m.category_type
@@ -153,20 +153,21 @@ coaTemplateRouter.post('/templates/:templateId/apply', async (req, res) => {
       [workspaceId, templateId],
     );
     await client.query(
-      `INSERT INTO item_category_account_mappings(company_id,category_id,inventory_account_id,cogs_account_id,sales_account_id,usage_account_id)
-       SELECT $1,c.id,inv.id,cogs.id,sales.id,usage.id
+      `INSERT INTO item_category_account_mappings(
+         company_id,category_id,inventory_account_id,cogs_account_id,sales_account_id,usage_account_id,stock_adjustment_account_id)
+       SELECT $1,c.id,inv.id,cogs.id,sales.id,usage.id,stockadj.id
          FROM coa_template_item_categories m
          JOIN item_categories c ON c.workspace_id=$2 AND c.code=m.category_code
          LEFT JOIN chart_of_accounts inv ON inv.company_id=$1 AND inv.code=m.inventory_account_code
          LEFT JOIN chart_of_accounts cogs ON cogs.company_id=$1 AND cogs.code=m.cogs_account_code
          LEFT JOIN chart_of_accounts sales ON sales.company_id=$1 AND sales.code=m.sales_account_code
          LEFT JOIN chart_of_accounts usage ON usage.company_id=$1 AND usage.code=m.usage_account_code
+         LEFT JOIN chart_of_accounts stockadj ON stockadj.company_id=$1 AND stockadj.code=m.stock_adjustment_account_code
         WHERE m.template_id=$3
        ON CONFLICT(company_id,category_id) DO NOTHING`,
       [companyId, workspaceId, templateId],
     );
 
-    // Asset category mappings follow the MeatNight asset grouping and remain editable per company.
     await client.query(
       `INSERT INTO asset_categories(workspace_id,code,name)
        SELECT $1,m.category_code,m.category_name
@@ -188,7 +189,6 @@ coaTemplateRouter.post('/templates/:templateId/apply', async (req, res) => {
       [companyId, workspaceId, templateId],
     );
 
-    // Tax accounts are deliberately separate from Important Accounts because they belong to the tax master.
     await client.query(
       `INSERT INTO tax_account_defaults(company_id,tax_role_code,label,account_id)
        SELECT $1,m.tax_role_code,m.label,coa.id
@@ -245,19 +245,22 @@ coaTemplateRouter.put('/company/:companyId/item-category/:categoryId', async (re
   const values = [
     nullable(req.body?.inventoryAccountId), nullable(req.body?.cogsAccountId),
     nullable(req.body?.salesAccountId), nullable(req.body?.usageAccountId),
+    nullable(req.body?.stockAdjustmentAccountId),
   ];
   for (const accountId of values.filter(Boolean)) {
     const valid = await query('SELECT 1 FROM chart_of_accounts WHERE id=$1 AND company_id=$2', [accountId, companyId]);
     if (!valid.rowCount) return res.status(400).json({ error: 'INVALID_ACCOUNT' });
   }
   await query(
-    `INSERT INTO item_category_account_mappings(company_id,category_id,inventory_account_id,cogs_account_id,sales_account_id,usage_account_id)
-     VALUES($1,$2,$3,$4,$5,$6)
+    `INSERT INTO item_category_account_mappings(
+       company_id,category_id,inventory_account_id,cogs_account_id,sales_account_id,usage_account_id,stock_adjustment_account_id)
+     VALUES($1,$2,$3,$4,$5,$6,$7)
      ON CONFLICT(company_id,category_id) DO UPDATE SET
        inventory_account_id=EXCLUDED.inventory_account_id,
        cogs_account_id=EXCLUDED.cogs_account_id,
        sales_account_id=EXCLUDED.sales_account_id,
        usage_account_id=EXCLUDED.usage_account_id,
+       stock_adjustment_account_id=EXCLUDED.stock_adjustment_account_id,
        updated_at=NOW()`,
     [companyId, categoryId, ...values],
   );

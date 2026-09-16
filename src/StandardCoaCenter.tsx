@@ -13,6 +13,7 @@ type ItemMapping = {
   cogs_account_id: string | null; cogs_account_code?: string; cogs_account_name?: string;
   sales_account_id: string | null; sales_account_code?: string; sales_account_name?: string;
   usage_account_id: string | null; usage_account_code?: string; usage_account_name?: string;
+  stock_adjustment_account_id: string | null; stock_adjustment_account_code?: string; stock_adjustment_account_name?: string;
 };
 type AssetMapping = {
   category_id: string; category_code: string; category_name: string;
@@ -135,6 +136,7 @@ export function StandardCoaCenter() {
         cogsAccountId:next.cogs_account_id || null,
         salesAccountId:next.sales_account_id || null,
         usageAccountId:next.usage_account_id || null,
+        stockAdjustmentAccountId:next.stock_adjustment_account_id || null,
       }),
     });
     await loadMappings(companyId);
@@ -208,7 +210,7 @@ export function StandardCoaCenter() {
       </div>}
 
       {tab === 'items' && <div className="mapping-list">
-        <div className="mapping-intro"><strong>Akun melekat pada Kelompok Barang</strong><span>Item akan mewarisi mapping kelompoknya. Override item individual dapat ditambahkan pada tahap berikutnya.</span></div>
+        <div className="mapping-intro"><strong>Akun melekat pada Kelompok Barang</strong><span>Persediaan, HPP, pemakaian dan selisih Stock Opname diwarisi item dari kelompoknya. Client tidak memilih akun saat transaksi.</span></div>
         {(mapping?.itemCategories || []).map(row => <div className="mapping-block" key={row.category_id}>
           <div className="mapping-block-title"><strong>{row.category_name}</strong><span>{row.category_type}</span></div>
           <div className="mapping-grid four">
@@ -216,6 +218,7 @@ export function StandardCoaCenter() {
             <label>HPP<AccountSelect value={row.cogs_account_id} accounts={(mapping?.accounts || []).filter(a => a.account_type === 'COGS')} onChange={v => void saveItem(row,{cogs_account_id:v || null})}/></label>
             <label>Penjualan<AccountSelect value={row.sales_account_id} accounts={(mapping?.accounts || []).filter(a => a.account_type === 'REVENUE')} onChange={v => void saveItem(row,{sales_account_id:v || null})}/></label>
             <label>Pemakaian<AccountSelect value={row.usage_account_id} accounts={(mapping?.accounts || []).filter(a => ['COGS','EXPENSE'].includes(a.account_type))} onChange={v => void saveItem(row,{usage_account_id:v || null})}/></label>
+            <label>Stock Opname / Selisih<AccountSelect value={row.stock_adjustment_account_id} accounts={(mapping?.accounts || []).filter(a => ['COGS','EXPENSE','OTHER_EXPENSE'].includes(a.account_type))} onChange={v => void saveItem(row,{stock_adjustment_account_id:v || null})}/></label>
           </div>
         </div>)}
       </div>}
