@@ -13,6 +13,12 @@ const today=()=>new Date().toISOString().slice(0,10);
 const monthStart=()=>`${today().slice(0,7)}-01`;
 const qty=(value:string|number)=>Number(value||0).toLocaleString('id-ID',{maximumFractionDigits:4});
 const money=(value:string|number)=>Number(value||0).toLocaleString('id-ID',{maximumFractionDigits:0});
+const movementLabels:Record<string,string>={
+  PURCHASE_IN:'Pembelian',USAGE_OUT:'Pemakaian',TRANSFER_IN:'Transfer Masuk',TRANSFER_OUT:'Transfer Keluar',
+  ADJUSTMENT_IN:'Penyesuaian +',ADJUSTMENT_OUT:'Penyesuaian -',SALE_OUT:'Penjualan',
+  PRODUCTION_IN:'Hasil Produksi',PRODUCTION_OUT:'Bahan Produksi',
+};
+const movementLabel=(type:string)=>movementLabels[type]||type;
 
 export function ClientInventoryControl(){
   const [companies,setCompanies]=useState<Company[]>([]);const [locations,setLocations]=useState<Location[]>([]);const [companyId,setCompanyId]=useState('');const [locationId,setLocationId]=useState('');const [rows,setRows]=useState<ControlRow[]>([]);const [search,setSearch]=useState('');const [status,setStatus]=useState('SEMUA');const [selected,setSelected]=useState<ControlRow|null>(null);const [from,setFrom]=useState(monthStart());const [to,setTo]=useState(today());const [card,setCard]=useState<CardResponse|null>(null);const [loading,setLoading]=useState(false);const [error,setError]=useState('');
@@ -27,7 +33,6 @@ export function ClientInventoryControl(){
   const totalValue=rows.reduce((a,r)=>a+Number(r.stock_value||0),0);const minus=rows.filter(x=>x.status==='STOK MINUS').length;const empty=rows.filter(x=>x.status==='HABIS').length;
 
   function selectItem(row:ControlRow){setSelected(row);setCard(null);window.setTimeout(()=>void loadCard(row),0);}
-  const movementLabel=(type:string)=>({PURCHASE_IN:'Pembelian',USAGE_OUT:'Pemakaian',TRANSFER_IN:'Transfer Masuk',TRANSFER_OUT:'Transfer Keluar',ADJUSTMENT_IN:'Penyesuaian +',ADJUSTMENT_OUT:'Penyesuaian -',SALE_OUT:'Penjualan',PRODUCTION_IN:'Hasil Produksi',PRODUCTION_OUT:'Bahan Produksi'}[type]||type);
 
   return <div className="page-content inventory-control-page">
     <section className="section-card">
