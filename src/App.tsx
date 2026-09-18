@@ -35,6 +35,8 @@ import { ClientItemUsage } from './ClientItemUsage';
 import { ClientStockTransfer } from './ClientStockTransfer';
 import { ClientStockOpname } from './ClientStockOpname';
 import { ClientSalesImport } from './ClientSalesImport';
+import { ClientBomProduction } from './ClientBomProduction';
+import { ClientInventoryControl } from './ClientInventoryControl';
 
 type Session = {
   user: { id: string; email: string; fullName: string; isSystemAdmin: boolean };
@@ -55,7 +57,7 @@ type Summary = { workspaces: number; companies: number; locations: number; items
 type Workspace = { id: string; code: string; name: string; status: string };
 type Company = { id: string; workspace_id: string; code: string; name: string; status: string; workspace_name?: string };
 type Location = { id: string; company_id: string; code: string; name: string; location_type: string; status: string; company_name?: string };
-type Page = 'dashboard' | 'organization' | 'items' | 'partners' | 'purchase' | 'sales' | 'cash-in' | 'cash-out' | 'item-usage' | 'stock-transfer' | 'stock-opname' | 'finance' | 'coa-standard' | 'transactions' | 'control' | 'access' | 'settings';
+type Page = 'dashboard' | 'organization' | 'items' | 'partners' | 'purchase' | 'sales' | 'cash-in' | 'cash-out' | 'item-usage' | 'stock-transfer' | 'stock-opname' | 'inventory-control' | 'bom-production' | 'finance' | 'coa-standard' | 'transactions' | 'control' | 'access' | 'settings';
 type OrganizationTab = 'workspace' | 'company' | 'location';
 
 const locationLabel: Record<string, string> = {
@@ -65,7 +67,8 @@ const locationLabel: Record<string, string> = {
 
 const pageTitles: Record<Page, string> = {
   dashboard: 'Dashboard', organization: 'Master Organisasi', items: 'Barang & Inventory', partners: 'Supplier & Relasi',
-  purchase: 'Invoice Pembelian', sales: 'Data Penjualan / Import POS', 'cash-in': 'Kas & Bank Masuk', 'cash-out': 'Kas & Bank Keluar', 'item-usage': 'Pemakaian Barang', 'stock-transfer': 'Transfer Barang', 'stock-opname': 'Stock Opname', finance: 'Finance & Accounting Master',
+  purchase: 'Invoice Pembelian', sales: 'Data Penjualan / Import POS', 'cash-in': 'Kas & Bank Masuk', 'cash-out': 'Kas & Bank Keluar', 'item-usage': 'Pemakaian Barang', 'stock-transfer': 'Transfer Barang', 'stock-opname': 'Stock Opname',
+  'inventory-control': 'Kontrol Stok & Kartu Stok', 'bom-production': 'BOM & Produksi STJ', finance: 'Finance & Accounting Master',
   'coa-standard': 'COA Standard & Mapping', transactions: 'Jurnal / Transaction Engine', control: 'Accounting Control Center',
   access: 'User & Hak Akses', settings: 'Pengaturan',
 };
@@ -95,7 +98,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
       <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nama@perusahaan.com" autoFocus/></label>
       <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"/></label>
       {error && <div className="form-error">{error}</div>}
-      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.14 · Development</small>
+      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.15 · Development</small>
     </form></section>
   </main>;
 }
@@ -173,6 +176,8 @@ export function App() {
           <button className={active === 'item-usage' ? 'active' : ''} onClick={() => setActive('item-usage')}><PackageSearch size={18}/> Pemakaian Barang</button>
           <button className={active === 'stock-transfer' ? 'active' : ''} onClick={() => setActive('stock-transfer')}><Boxes size={18}/> Transfer Barang</button>
           <button className={active === 'stock-opname' ? 'active' : ''} onClick={() => setActive('stock-opname')}><PackageSearch size={18}/> Stock Opname</button>
+          <button className={active === 'inventory-control' ? 'active' : ''} onClick={() => setActive('inventory-control')}><PackageSearch size={18}/> Kontrol & Kartu Stok</button>
+          <button className={active === 'bom-production' ? 'active' : ''} onClick={() => setActive('bom-production')}><Boxes size={18}/> BOM & Produksi STJ</button>
 
           <NavLabel>Accounting</NavLabel>
           <button className={active === 'control' ? 'active' : ''} onClick={() => setActive('control')}><ShieldCheck size={18}/> Control Center</button>
@@ -194,6 +199,8 @@ export function App() {
           <button className={active === 'item-usage' ? 'active' : ''} onClick={() => setActive('item-usage')}><PackageSearch size={18}/> Pemakaian Barang</button>
           <button className={active === 'stock-transfer' ? 'active' : ''} onClick={() => setActive('stock-transfer')}><Boxes size={18}/> Transfer Barang</button>
           <button className={active === 'stock-opname' ? 'active' : ''} onClick={() => setActive('stock-opname')}><PackageSearch size={18}/> Stock Opname</button>
+          <button className={active === 'inventory-control' ? 'active' : ''} onClick={() => setActive('inventory-control')}><PackageSearch size={18}/> Kontrol & Kartu Stok</button>
+          <button className={active === 'bom-production' ? 'active' : ''} onClick={() => setActive('bom-production')}><Boxes size={18}/> BOM & Produksi STJ</button>
 
           <NavLabel>Master</NavLabel>
           <button className={active === 'items' ? 'active' : ''} onClick={() => setActive('items')}><Boxes size={18}/> Barang / Item</button>
@@ -208,7 +215,7 @@ export function App() {
     </aside>
 
     <section className="content-shell">
-      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.14</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
+      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.15</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
       {active === 'dashboard' && <Dashboard summary={summary} setActive={setActive} clientMode={clientOnly}/>} 
       {active === 'organization' && canAccounting && <OrganizationMaster/>}
       {active === 'items' && (clientOnly ? <ClientItemCenter/> : <MasterItemCenter/>)}
@@ -220,6 +227,8 @@ export function App() {
       {active === 'item-usage' && (clientOnly || canAccounting) && <ClientItemUsage canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}
       {active === 'stock-transfer' && (clientOnly || canAccounting) && <ClientStockTransfer canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}
       {active === 'stock-opname' && (clientOnly || canAccounting) && <ClientStockOpname canVerify={canVerifyTransactions}/>}
+      {active === 'inventory-control' && (clientOnly || canAccounting) && <ClientInventoryControl/>}
+      {active === 'bom-production' && (clientOnly || canAccounting) && <ClientBomProduction canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}
       {active === 'finance' && canAccounting && <MasterFinanceCenter/>}
       {active === 'coa-standard' && canAccounting && <StandardCoaCenter/>}
       {active === 'transactions' && canAccounting && <TransactionForm canVerify={canVerifyTransactions}/>}
@@ -235,21 +244,21 @@ function Dashboard({ summary, setActive, clientMode }: { summary: Summary | null
     <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL PANEL</span><h1>Catat kegiatan bisnis, bukan jurnal.</h1><p>Kategori, COA, mapping akun dan setup accounting dikelola Akuntakita. Tim client fokus pada administrasi operasional sehari-hari.</p></div><button className="primary-button compact" onClick={() => setActive('sales')}>Import Penjualan <ChevronRight size={17}/></button></section>
     <div className="metrics-grid"><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/><Metric icon={<UsersRound/>} value={summary?.partners ?? 0} label="Supplier / Relasi"/></div>
     <section className="section-card"><div className="section-title"><div><span className="eyebrow">ALUR KERJA CLIENT</span><h3>Portal client dibuat sederhana</h3></div></div><div className="foundation-list">
-      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice Pembelian, Data Penjualan, Kas/Bank, Pemakaian, Transfer dan Stock Opname adalah area kerja harian client. Tidak ada pilihan COA atau jurnal.</small></span></div>
-      <div><b>02</b><span><strong>Import POS</strong><small>Penjualan dapat dipaste dari Excel/Google Sheets atau upload CSV/TXT dengan pola kolom operasional yang familiar.</small></span></div>
-      <div><b>03</b><span><strong>Pembayaran & Persediaan</strong><small>Cash, QRIS, Transfer, Compliment, GoFood dan GrabFood diarahkan otomatis; item stok mengurangi persediaan dengan HPP moving average.</small></span></div>
-      <div><b>04</b><span><strong>Accounting Otomatis</strong><small>Setelah Finance Verified, invoice penjualan dan draft jurnal masuk Accounting Review tanpa client memilih akun.</small></span></div>
+      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice Pembelian, Data Penjualan, Kas/Bank, Pemakaian, Transfer, Produksi dan Stock Opname adalah area kerja harian client. Tidak ada pilihan COA atau jurnal.</small></span></div>
+      <div><b>02</b><span><strong>BOM & Produksi</strong><small>Resep menu dan STJ menghubungkan operasional F&B dengan pemakaian bahan, hasil produksi dan HPP moving average.</small></span></div>
+      <div><b>03</b><span><strong>Kontrol Persediaan</strong><small>Kontrol Stok dan Kartu Stok membaca inventory ledger yang sama sehingga sumber mutasi dapat ditelusuri per dokumen.</small></span></div>
+      <div><b>04</b><span><strong>Accounting Otomatis</strong><small>Setelah Finance Verified, transaksi dan draft jurnal masuk Accounting Review tanpa client memilih akun.</small></span></div>
     </div></section>
   </div>;
 
   return <div className="page-content">
     <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL + ACCOUNTING</span><h1>Operasional sederhana, accounting tetap terkendali.</h1><p>Finance Control menangkap transaksi bisnis. Accounting Akuntakita mengarahkan, mereview, memposting dan menutup periode tanpa input ulang.</p></div><button className="primary-button compact" onClick={() => setActive('control')}>Buka Accounting Control <ChevronRight size={17}/></button></section>
     <div className="metrics-grid"><Metric icon={<Users/>} value={summary?.workspaces ?? 0} label="Client / Workspace"/><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/></div>
-    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.14</span><h3>Struktur kerja sistem</h3></div></div><div className="foundation-list">
-      <div><b>01</b><span><strong>Finance Control</strong><small>Pembelian, penjualan POS, kas/bank dan kontrol persediaan menjadi sumber transaksi bisnis.</small></span></div>
-      <div><b>02</b><span><strong>Accounting</strong><small>Control Center, arah akun, jurnal, review, posting dan closing dikelola Akuntakita.</small></span></div>
-      <div><b>03</b><span><strong>Penjualan POS</strong><small>Payment channel dan kategori item mengarahkan jurnal penjualan; barang stok membentuk HPP dan pengurangan persediaan otomatis.</small></span></div>
-      <div><b>04</b><span><strong>Client tetap sederhana</strong><small>Portal client hanya menampilkan bahasa bisnis dan data spreadsheet, sementara mapping akun tetap dikelola Akuntakita.</small></span></div>
+    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.15</span><h3>Struktur kerja sistem</h3></div></div><div className="foundation-list">
+      <div><b>01</b><span><strong>Finance Control</strong><small>Pembelian, penjualan POS, kas/bank, produksi dan kontrol persediaan menjadi sumber transaksi bisnis.</small></span></div>
+      <div><b>02</b><span><strong>BOM & Inventory Ledger</strong><small>BOM menu/produksi, moving average, kartu stok dan kontrol stok menggunakan satu sumber mutasi persediaan.</small></span></div>
+      <div><b>03</b><span><strong>Accounting</strong><small>Control Center, arah akun, jurnal, review, posting dan closing dikelola Akuntakita.</small></span></div>
+      <div><b>04</b><span><strong>Client tetap sederhana</strong><small>Portal client hanya menampilkan bahasa bisnis, sementara mapping akun dan jurnal tetap dikelola Akuntakita.</small></span></div>
     </div></section>
   </div>;
 }
