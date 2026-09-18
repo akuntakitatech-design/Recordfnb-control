@@ -96,7 +96,7 @@ clientSalesImportProfileRouter.post('/sales-import-profiles',async(req,res)=>{
   if(!(await canCreateTransaction(req.sessionUser!.id,companyId))) return res.status(403).json({error:'FORBIDDEN'});
   const workspaceId=await companyWorkspace(companyId);
   if(!workspaceId) return res.status(404).json({error:'COMPANY_NOT_FOUND'});
-  const fileMode=numberOption(req.body?.fileMode,'WIDE',['WIDE','VERTICAL']);
+  const fileMode=numberOption(req.body?.fileMode,'WIDE',['WIDE','VERTICAL','REPORT']);
   const headerRow=Number(req.body?.headerRow||1);
   if(!Number.isInteger(headerRow)||headerRow<1||headerRow>100) return res.status(400).json({error:'INVALID_HEADER_ROW'});
   const result=await query<{id:string}>(
@@ -117,7 +117,7 @@ clientSalesImportProfileRouter.put('/sales-import-profiles/:profileId',async(req
   const name=text(req.body?.name);
   if(!name) return res.status(400).json({error:'PROFILE_NAME_REQUIRED'});
   const status=numberOption(req.body?.status,'ACTIVE',['ACTIVE','INACTIVE']);
-  const fileMode=numberOption(req.body?.fileMode,'WIDE',['WIDE','VERTICAL']);
+  const fileMode=numberOption(req.body?.fileMode,'WIDE',['WIDE','VERTICAL','REPORT']);
   const headerRow=Number(req.body?.headerRow||1);
   if(!Number.isInteger(headerRow)||headerRow<1||headerRow>100) return res.status(400).json({error:'INVALID_HEADER_ROW'});
   await query(
