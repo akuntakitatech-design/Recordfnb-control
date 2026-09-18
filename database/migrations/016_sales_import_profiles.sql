@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS sales_import_profiles (
   name TEXT NOT NULL,
   provider TEXT,
   status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','INACTIVE')),
-  file_mode TEXT NOT NULL DEFAULT 'WIDE' CHECK (file_mode IN ('WIDE','VERTICAL')),
+  file_mode TEXT NOT NULL DEFAULT 'WIDE' CHECK (file_mode IN ('WIDE','VERTICAL','REPORT')),
   header_row INTEGER NOT NULL DEFAULT 1 CHECK (header_row > 0),
   delimiter TEXT NOT NULL DEFAULT 'AUTO',
   date_format TEXT NOT NULL DEFAULT 'AUTO',
