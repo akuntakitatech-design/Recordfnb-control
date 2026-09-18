@@ -149,7 +149,38 @@ function findNumericNearLabel(row:unknown[],labelCol:number){
 }
 function firstBlockValue(matrix:unknown[][],start:number,end:number,col:number|undefined){
   if(col===undefined) return '';
-  for(let r=start;r<end;r+=1){const v=text(matrix[r]?.[col]);if(v) return v;}
+  for(let r=start;r<end;r+=1){
+    const v=text(matrix[r]?.[col]);
+    if(v&&!metadataLabels.has(token(v))) return v;
+  }
+  return '';
+}
+function valueRightOfLabel(row:unknown[],labelCol:number){
+  for(let c=labelCol+1;c<row.length;c+=1){
+    const v=text(row[c]);
+    if(v) return v;
+  }
+  return '';
+}
+function labeledValueInBlock(matrix:unknown[][],start:number,end:number,label:string){
+  for(let r=start;r<end;r+=1){
+    const row=matrix[r]||[];
+    for(let c=0;c<row.length;c+=1){
+      if(token(row[c])===label){
+        const value=valueRightOfLabel(row,c);
+        if(value) return value;
+      }
+    }
+  }
+  return '';
+}
+function invoiceNumberOnLabeledRow(row:unknown[]){
+  for(let c=0;c<row.length;c+=1){
+    if(token(row[c])!=='INVOICE') continue;
+    for(let x=c+1;x<row.length;x+=1){
+      if(looksLikeInvoice(row[x])) return text(row[x]);
+    }
+  }
   return '';
 }
 
@@ -174,14 +205,26 @@ export function parseQuinosInvoiceReport(matrix:unknown[][]):QuinosParseResult{
   }
 
   const invoiceStarts:{row:number;invoiceNumber:string}[]=[];
+
+  // Real Quinos Invoice Detail Report repeats "Invoice #" on every invoice header row,
+  // with the invoice number several columns to the right (for example col B -> E).
   for(let r=0;r<matrix.length;r+=1){
-    const row=matrix[r]||[];
-    if(invoiceCol!==undefined&&looksLikeInvoice(row[invoiceCol])){
-      invoiceStarts.push({row:r,invoiceNumber:text(row[invoiceCol])});
-      continue;
+    const invoiceNumber=invoiceNumberOnLabeledRow(matrix[r]||[]);
+    if(invoiceNumber) invoiceStarts.push({row:r,invoiceNumber});
+  }
+
+  // Older/flattened exports may have one header row and invoice values below the same column.
+  if(!invoiceStarts.length&&invoiceCol!==undefined){
+    for(let r=0;r<matrix.length;r+=1){
+      const value=matrix[r]?.[invoiceCol];
+      if(looksLikeInvoice(value)) invoiceStarts.push({row:r,invoiceNumber:text(value)});
     }
-    if(invoiceCol===undefined){
-      const candidate=row.slice(0,5).find(looksLikeInvoice);
+  }
+
+  // Final fallback for unusual flattened files without a stable header column.
+  if(!invoiceStarts.length){
+    for(let r=0;r<matrix.length;r+=1){
+      const candidate=(matrix[r]||[]).slice(0,10).find(looksLikeInvoice);
       if(candidate) invoiceStarts.push({row:r,invoiceNumber:text(candidate)});
     }
   }
@@ -193,10 +236,11 @@ export function parseQuinosInvoiceReport(matrix:unknown[][]):QuinosParseResult{
   for(let i=0;i<invoiceStarts.length;i+=1){
     const current=invoiceStarts[i];
     const end=i+1<invoiceStarts.length?invoiceStarts[i+1].row:matrix.length;
-    const cashier=firstBlockValue(matrix,current.row,end,metaCols.CASHIER);
-    const saleType=firstBlockValue(matrix,current.row,end,metaCols.TYPE);
-    const opened=firstBlockValue(matrix,current.row,end,metaCols.OPENED);
-    const closed=firstBlockValue(matrix,current.row,end,metaCols.CLOSED);
+
+    const cashier=labeledValueInBlock(matrix,current.row,end,'CASHIER')||firstBlockValue(matrix,current.row,end,metaCols.CASHIER);
+    const saleType=labeledValueInBlock(matrix,current.row,end,'TYPE')||firstBlockValue(matrix,current.row,end,metaCols.TYPE);
+    const opened=labeledValueInBlock(matrix,current.row,end,'OPENED')||firstBlockValue(matrix,current.row,end,metaCols.OPENED);
+    const closed=labeledValueInBlock(matrix,current.row,end,'CLOSED')||firstBlockValue(matrix,current.row,end,metaCols.CLOSED);
     const saleDate=toIsoDate(opened)||toIsoDate(closed);
     if(!saleDate) warnings.push(`${current.invoiceNumber}: tanggal Opened/Closed belum dapat dibaca.`);
 
@@ -208,13 +252,17 @@ export function parseQuinosInvoiceReport(matrix:unknown[][]):QuinosParseResult{
         const itemCode=text(row[c]).toUpperCase();
         const itemName=nearestDescription(matrix,r,c);
         if(!itemName) continue;
-        const nums=numbersInRow(row).filter(x=>x.col!==invoiceCol&&x.col!==metaCols.PAX&&x.col!==metaCols.TBL&&x.col!==metaCols.TABLE);
+
+        const nums=numbersInRow(row);
         const rightNums=nums.filter(x=>x.col>c);
         const amountCandidate=rightNums.length?rightNums[rightNums.length-1]:nums.length?nums[nums.length-1]:null;
-        const qtyCandidate=nums.filter(x=>x!==amountCandidate&&x.value>0&&x.value<=100&&Number.isInteger(x.value)).sort((a,b)=>Math.abs(a.col-c)-Math.abs(b.col-c))[0];
+        const qtyCandidate=nums
+          .filter(x=>x!==amountCandidate&&x.value>0&&x.value<=100&&Number.isInteger(x.value))
+          .sort((a,b)=>Math.abs(a.col-c)-Math.abs(b.col-c))[0];
         const quantity=qtyCandidate?.value||1;
         const lineTotal=amountCandidate?.value??0;
         const unitPrice=quantity?lineTotal/quantity:lineTotal;
+
         invoiceRows.push({
           saleDate,invoiceNumber:current.invoiceNumber,cashier,saleType,itemCode,itemName,itemId:'',
           quantity:String(quantity),unitPrice:String(unitPrice),discountAmount:'0',lineTotal:String(lineTotal),
@@ -239,7 +287,6 @@ export function parseQuinosInvoiceReport(matrix:unknown[][]):QuinosParseResult{
     for(let r=current.row;r<end;r+=1){
       const row=matrix[r]||[];
       for(let c=0;c<row.length;c+=1){
-        if(c===metaCols.TYPE) continue;
         const code=paymentAliases[token(row[c])];
         if(!code) continue;
         if(!paymentMethods.includes(code)) paymentMethods.push(code);
