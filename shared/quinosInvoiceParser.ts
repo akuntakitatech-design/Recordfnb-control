@@ -267,7 +267,9 @@ export function parseQuinosInvoiceReport(matrix:unknown[][]):QuinosParseResult{
     const itemTotal=invoiceRows.reduce((sum,row)=>sum+Number(row.lineTotal||0),0);
     const paymentTotal=Object.values(paymentTotals).reduce((sum,value)=>sum+(value||0),0);
     const difference=invoiceTotal===null?null:invoiceTotal-itemTotal;
-    if(difference!==null&&Math.abs(difference)>1) warnings.push(`${current.invoiceNumber}: total item ${itemTotal.toFixed(0)} berbeda dengan total invoice ${invoiceTotal.toFixed(0)} sebesar ${difference.toFixed(0)}.`);
+    if(invoiceTotal!==null&&difference!==null&&Math.abs(difference)>1){
+      warnings.push(`${current.invoiceNumber}: total item ${itemTotal.toFixed(0)} berbeda dengan total invoice ${invoiceTotal.toFixed(0)} sebesar ${difference.toFixed(0)}.`);
+    }
     audits.push({invoiceNumber:current.invoiceNumber,saleDate,itemRows:invoiceRows.length,itemTotal,invoiceTotal,paymentTotal,paymentMethods,difference});
   }
 
