@@ -1,8 +1,10 @@
 import Decimal from 'decimal.js';
 
-const dec = (value: string | number) => new Decimal(value || 0);
+type DecimalInput = string | number | Decimal;
 
-export function effectiveBomQuantity(quantity: string | number, wastePercent: string | number) {
+const dec = (value: DecimalInput) => new Decimal(value || 0);
+
+export function effectiveBomQuantity(quantity: DecimalInput, wastePercent: DecimalInput) {
   const qty = dec(quantity);
   const waste = dec(wastePercent);
   if (qty.lte(0)) throw new Error('BOM_QUANTITY_MUST_BE_POSITIVE');
@@ -10,13 +12,13 @@ export function effectiveBomQuantity(quantity: string | number, wastePercent: st
   return qty.mul(new Decimal(1).add(waste.div(100)));
 }
 
-export function productionRequirement(quantity: string | number, wastePercent: string | number, batchCount: string | number) {
+export function productionRequirement(quantity: DecimalInput, wastePercent: DecimalInput, batchCount: DecimalInput) {
   const batches = dec(batchCount);
   if (batches.lte(0)) throw new Error('BATCH_COUNT_MUST_BE_POSITIVE');
   return effectiveBomQuantity(quantity, wastePercent).mul(batches);
 }
 
-export function productionYield(actualOutput: string | number, standardOutput: string | number) {
+export function productionYield(actualOutput: DecimalInput, standardOutput: DecimalInput) {
   const actual = dec(actualOutput);
   const standard = dec(standardOutput);
   if (actual.lt(0)) throw new Error('ACTUAL_OUTPUT_CANNOT_BE_NEGATIVE');
@@ -25,10 +27,10 @@ export function productionYield(actualOutput: string | number, standardOutput: s
 }
 
 export function movingAverageAfterProduction(
-  beforeQuantity: string | number,
-  beforeAverageCost: string | number,
-  producedQuantity: string | number,
-  productionCost: string | number,
+  beforeQuantity: DecimalInput,
+  beforeAverageCost: DecimalInput,
+  producedQuantity: DecimalInput,
+  productionCost: DecimalInput,
 ) {
   const beforeQty = dec(beforeQuantity);
   const beforeAvg = dec(beforeAverageCost);
