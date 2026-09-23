@@ -1,5 +1,13 @@
-node_modules
-dist
+node_modules/
+dist/
 .env
+.env.*
+!.env.example
 .DS_Store
 npm-debug.log*
+yarn-error.log
+.ruff_cache/
+__pycache__/
+/memory/
+/test_reports/
+/.emergent/

@@ -1,0 +1,79 @@
+# Template ini diproses oleh envsubst (image nginx resmi) saat container start.
+# Variabel: ${BACKEND_URL} ${NGINX_PORT} ${CLIENT_MAX_BODY_SIZE} ${NGINX_LOCAL_RESOLVERS}
+#
+# proxy_pass memakai VARIABEL + resolver agar nama backend di-resolve saat request (runtime),
+# bukan saat Nginx start: container frontend tidak gagal start bila backend belum hidup /
+# berganti nama container (Coolify), melainkan membalas 502 sementara dan pulih otomatis.
+
+# Teruskan protokol/host asli dari reverse proxy di depan (Traefik/Coolify) bila ada.
+map $http_x_forwarded_proto $forwarded_proto {
+    default $scheme;
+    https   https;
+    http    http;
+}
+map $http_x_forwarded_host $forwarded_host {
+    default $host;
+    ""      $host;
+}
+
+server {
+    listen ${NGINX_PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size ${CLIENT_MAX_BODY_SIZE};
+
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+    resolver_timeout 5s;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+    gzip_min_length 1024;
+
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 'ok';
+    }
+
+    # API -> backend Express (jaringan internal Coolify)
+    location /api/ {
+        set $backend_upstream "${BACKEND_URL}";
+        proxy_pass $backend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header X-Forwarded-Host $forwarded_host;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_intercept_errors on;
+        error_page 502 503 504 = @backend_down;
+    }
+
+    location @backend_down {
+        default_type application/json;
+        return 502 '{"error":"BACKEND_UNAVAILABLE","detail":"Server aplikasi belum dapat dihubungi (backend belum siap atau BACKEND_URL salah). Coba lagi beberapa saat."}';
+    }
+
+    # index.html jangan pernah di-cache (shell SPA harus selalu terbaru setelah deploy)
+    location = /index.html {
+        expires -1;
+        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" always;
+        try_files $uri =404;
+    }
+
+    # Aset ber-hash (Vite: /assets/*.js|css) -> cache lama
+    location ~* \.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?)$ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

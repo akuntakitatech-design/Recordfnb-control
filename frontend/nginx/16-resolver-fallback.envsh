@@ -1,0 +1,7 @@
+#!/bin/sh
+# Fallback jika 15-local-resolvers.envsh tidak menghasilkan nameserver (resolv.conf kosong).
+# 127.0.0.11 = DNS internal Docker.
+if [ -z "${NGINX_LOCAL_RESOLVERS:-}" ] || [ "$(printf '%s' "$NGINX_LOCAL_RESOLVERS" | tr -d '[:space:]')" = "" ]; then
+  export NGINX_LOCAL_RESOLVERS="127.0.0.11"
+  echo "[nginx] NGINX_LOCAL_RESOLVERS kosong, memakai 127.0.0.11" >&2
+fi

@@ -1,0 +1,46 @@
+name: F&B Control CI (monorepo)
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: backend/yarn.lock
+      - run: yarn install --frozen-lockfile
+      - name: Unit test (engine matematika & parser)
+        run: yarn test
+      - name: Typecheck
+        run: yarn typecheck
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - run: yarn install --frozen-lockfile
+      - name: Typecheck
+        run: yarn typecheck
+      - name: Build
+        run: yarn build
+        env:
+          CI: 'true'

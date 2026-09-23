@@ -1,0 +1,29 @@
+{
+  "name": "akuntakita-fnb-control-web",
+  "private": true,
+  "version": "0.17.0",
+  "type": "module",
+  "description": "Akuntakita F&B Control - Frontend (React + Vite) disajikan lewat Nginx",
+  "scripts": {
+    "dev": "vite",
+    "start": "vite --host 0.0.0.0 --port 3000",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "decimal.js": "^10.4.3",
+    "lucide-react": "^0.469.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

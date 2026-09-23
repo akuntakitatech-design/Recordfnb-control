@@ -1,0 +1,36 @@
+#!/bin/sh
+# Dijalankan (di-source) oleh entrypoint image nginx SEBELUM envsubst pada template.
+# Menormalkan BACKEND_URL agar Nginx tidak gagal start karena nilai env kurang tepat:
+#   - kosong                     -> http://backend:3000
+#   - tanpa skema (host:port)    -> ditambah http://
+#   - ada '/' di akhir           -> dihapus
+
+set -e
+
+BACKEND_URL_RAW="${BACKEND_URL:-}"
+BACKEND_URL_RAW="$(printf '%s' "$BACKEND_URL_RAW" | tr -d '[:space:]')"
+
+# Toleransi salah isi di UI Coolify: value berisi 'BACKEND_URL=http://...' atau dibungkus tanda kutip
+BACKEND_URL_RAW="$(printf '%s' "$BACKEND_URL_RAW" | sed -e 's/^BACKEND_URL=//' -e 's/^["'"'"']//' -e 's/["'"'"']$//')"
+
+if [ -z "$BACKEND_URL_RAW" ]; then
+  BACKEND_URL_RAW="http://backend:3000"
+  echo "[nginx] BACKEND_URL kosong, memakai default $BACKEND_URL_RAW" >&2
+fi
+
+case "$BACKEND_URL_RAW" in
+  http://*|https://*) ;;
+  *)
+    echo "[nginx] BACKEND_URL tanpa skema ('$BACKEND_URL_RAW'), menambahkan http://" >&2
+    BACKEND_URL_RAW="http://$BACKEND_URL_RAW"
+    ;;
+esac
+
+# Hapus trailing slash (proxy_pass dengan path mengubah perilaku URI rewriting)
+BACKEND_URL_RAW="$(printf '%s' "$BACKEND_URL_RAW" | sed 's#/*$##')"
+
+export BACKEND_URL="$BACKEND_URL_RAW"
+export NGINX_PORT="${NGINX_PORT:-80}"
+export CLIENT_MAX_BODY_SIZE="${CLIENT_MAX_BODY_SIZE:-20m}"
+
+echo "[nginx] proxy /api -> $BACKEND_URL (listen $NGINX_PORT, max body $CLIENT_MAX_BODY_SIZE)" >&2
