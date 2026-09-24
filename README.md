@@ -1,5 +1,10 @@
 # Akuntakita F&B Control (Recordfnb)
 
+[![frontend record.akuntakita.com](https://img.shields.io/badge/frontend-record.akuntakita.com-1f6feb?style=flat-square&logo=globe&logoColor=white)](https://record.akuntakita.com) [![api record.akuntakita.com/api](https://img.shields.io/badge/api-record.akuntakita.com%2Fapi-2ea043?style=flat-square&logo=serverless&logoColor=white)](https://record.akuntakita.com/api) ![media Cloudflare R2](https://img.shields.io/badge/media-Cloudflare%20R2-f38020?style=flat-square&logo=cloudflare&logoColor=white) ![workflow PR only · emergent-agent](https://img.shields.io/badge/workflow-PR%20only%20%C2%B7%20emergent--agent-8957e5?style=flat-square&logo=github&logoColor=white)
+
+![Node.js 22](https://img.shields.io/badge/Node.js-22-339933?style=flat-square&logo=nodedotjs&logoColor=white) ![Express 4](https://img.shields.io/badge/Express-4-000000?style=flat-square&logo=express&logoColor=white) ![TypeScript 5.7](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white) ![MariaDB 11](https://img.shields.io/badge/MariaDB-11-003545?style=flat-square&logo=mariadb&logoColor=white) ![React 19](https://img.shields.io/badge/React-19-20232a?style=flat-square&logo=react&logoColor=61dafb) ![Vite 6](https://img.shields.io/badge/Vite-6-646cff?style=flat-square&logo=vite&logoColor=white) ![Nginx 1.27](https://img.shields.io/badge/Nginx-1.27-009639?style=flat-square&logo=nginx&logoColor=white) ![Docker Coolify](https://img.shields.io/badge/Docker-Coolify-2496ed?style=flat-square&logo=docker&logoColor=white)
+
+
 ## 1. Overview Project
 
 **F&B Control** adalah platform *finance control & accounting* untuk bisnis F&B (restoran/kafe/dapur produksi) yang berjalan **multi-workspace → multi-company → multi-location**. Aplikasi ini menjembatani operasional outlet (klien) dengan tim akuntansi (Akuntakita):
