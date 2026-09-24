@@ -36,6 +36,10 @@ UNIT=$(j "$BASE/api/master/units?workspaceId=$WS" | python3 -c 'import sys,json;
 CAT=$(j "$BASE/api/master/item-categories?workspaceId=$WS" | python3 -c 'import sys,json;print([x for x in json.load(sys.stdin) if x["code"]=="TEST-RAW"][0]["id"])')
 j -X POST $BASE/api/master/items -d "{\"workspaceId\":\"$WS\",\"code\":\"TEST-DAGING\",\"name\":\"TEST Daging Sapi\",\"categoryId\":\"$CAT\",\"baseUnitId\":\"$UNIT\"}" | head -c 200; echo
 
+# 4b) Mapping akun kategori item TEST-RAW (persediaan/HPP/pemakaian) agar invoice pembelian bisa diverifikasi
+INV=$(coa 1105-00-001); COGS=$(coa 5101-00-001); USG=$(coa 5103-00-001)
+j -X PUT "$BASE/api/master/coa-standard/company/$CO/item-category/$CAT" -d "{\"inventoryAccountId\":\"$INV\",\"cogsAccountId\":\"$COGS\",\"usageAccountId\":\"$USG\"}" | head -c 200; echo
+
 # 5) Kategori pengeluaran (1 ter-mapping ke COA, 1 belum -> PERLU REVIEW)
 EXP_COA=$(coa 6200-00-004)  # Beban Listrik
 j -X POST $BASE/api/master/expense-categories -d "{\"companyId\":\"$CO\",\"code\":\"TEST-LISTRIK\",\"name\":\"TEST Listrik & Air\",\"accountId\":\"$EXP_COA\"}" | head -c 200; echo
