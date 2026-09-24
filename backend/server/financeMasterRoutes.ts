@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canWriteCompanyMaster, canWriteWorkspaceMaster } from './access.js';
+import { canAccessCompany, canWriteCompanyMaster, canWriteWorkspaceMaster } from './access.js';
 import { coaTemplateRouter } from './coaTemplateRoutes.js';
 
 export const financeMasterRouter = Router();
@@ -138,3 +138,72 @@ financeMasterRouter.post('/financial-accounts', async (req, res) => {
 });
 
 financeMasterRouter.use('/coa-standard', coaTemplateRouter);
+
+// ---------------------------------------------------------------------------
+// Kategori pengeluaran (bahasa bisnis Finance) -> mapping COA (dikelola Accounting)
+// ---------------------------------------------------------------------------
+financeMasterRouter.get('/expense-categories', async (req, res) => {
+  const companyId = text(req.query.companyId);
+  if (!companyId) return res.status(400).json({ error: 'COMPANY_REQUIRED' });
+  if (!(await canAccessCompany(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
+  const result = await query(
+    `SELECT ec.id,ec.company_id,ec.code,ec.name,ec.status,ec.account_id,coa.code account_code,coa.name account_name,
+            (SELECT COUNT(*)::int FROM transaction_lines tl WHERE tl.expense_category_id=ec.id) usage_count
+       FROM expense_categories ec
+       LEFT JOIN chart_of_accounts coa ON coa.id=ec.account_id
+      WHERE ec.company_id=$1
+      ORDER BY ec.status,ec.name`,
+    [companyId],
+  );
+  res.json(result.rows);
+});
+
+financeMasterRouter.post('/expense-categories', async (req, res) => {
+  const companyId = text(req.body?.companyId);
+  const code = upper(req.body?.code);
+  const name = text(req.body?.name);
+  const accountId = nullable(req.body?.accountId);
+  if (!companyId || !code || !name) return res.status(400).json({ error: 'COMPANY_CODE_NAME_REQUIRED' });
+  if (!(await canWriteCompanyMaster(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
+  const company = await query<{ workspace_id: string }>('SELECT workspace_id FROM companies WHERE id=$1', [companyId]);
+  if (!company.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
+  if (accountId) {
+    const coa = await query(`SELECT id FROM chart_of_accounts WHERE id=$1 AND company_id=$2 AND status='ACTIVE' AND allow_manual_posting=TRUE`, [accountId, companyId]);
+    if (!coa.rowCount) return res.status(400).json({ error: 'COA_OUTSIDE_COMPANY' });
+  }
+  const result = await query(
+    `INSERT INTO expense_categories(workspace_id,company_id,code,name,account_id)
+     VALUES($1,$2,$3,$4,$5) RETURNING id,company_id,code,name,account_id,status`,
+    [company.rows[0].workspace_id, companyId, code, name, accountId],
+  );
+  res.status(201).json(result.rows[0]);
+});
+
+financeMasterRouter.patch('/expense-categories/:categoryId', async (req, res) => {
+  const categoryId = text(req.params.categoryId);
+  const existing = await query<{ id: string; company_id: string; workspace_id: string; name: string; account_id: string | null; status: string }>(
+    'SELECT id,company_id,workspace_id,name,account_id,status FROM expense_categories WHERE id=$1', [categoryId],
+  );
+  if (!existing.rowCount) return res.status(404).json({ error: 'EXPENSE_CATEGORY_NOT_FOUND' });
+  const current = existing.rows[0];
+  if (!(await canWriteCompanyMaster(req.sessionUser!.id, current.company_id))) return res.status(403).json({ error: 'FORBIDDEN' });
+  const name = text(req.body?.name) || current.name;
+  const status = req.body?.status ? upper(req.body.status) : current.status;
+  if (!['ACTIVE', 'INACTIVE'].includes(status)) return res.status(400).json({ error: 'INVALID_STATUS' });
+  const accountId = req.body?.accountId === undefined ? current.account_id : nullable(req.body.accountId);
+  if (accountId) {
+    const coa = await query(`SELECT id FROM chart_of_accounts WHERE id=$1 AND company_id=$2 AND status='ACTIVE' AND allow_manual_posting=TRUE`, [accountId, current.company_id]);
+    if (!coa.rowCount) return res.status(400).json({ error: 'COA_OUTSIDE_COMPANY' });
+  }
+  await query(`UPDATE expense_categories SET name=$1,account_id=$2,status=$3,updated_at=NOW() WHERE id=$4`, [name, accountId, status, categoryId]);
+  await query(
+    `INSERT INTO audit_logs(workspace_id,user_id,entity_type,entity_id,action,before_data,after_data)
+     VALUES($1,$2,'EXPENSE_CATEGORY',$3,'UPDATE_MAPPING',$4::jsonb,$5::jsonb)`,
+    [current.workspace_id, req.sessionUser!.id, categoryId, JSON.stringify({ name: current.name, accountId: current.account_id, status: current.status }), JSON.stringify({ name, accountId, status })],
+  );
+  const result = await query(
+    `SELECT ec.id,ec.company_id,ec.code,ec.name,ec.status,ec.account_id,coa.code account_code,coa.name account_name
+       FROM expense_categories ec LEFT JOIN chart_of_accounts coa ON coa.id=ec.account_id WHERE ec.id=$1`, [categoryId],
+  );
+  res.json(result.rows[0]);
+});

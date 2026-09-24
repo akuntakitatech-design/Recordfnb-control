@@ -37,6 +37,7 @@ import { ClientStockOpname } from './ClientStockOpname';
 import { ClientSalesImport } from './ClientSalesImport';
 import { ClientBomProduction } from './ClientBomProduction';
 import { ClientInventoryControl } from './ClientInventoryControl';
+import { CashBankCenter } from './CashBankCenter';
 
 type Session = {
   user: { id: string; email: string; fullName: string; isSystemAdmin: boolean };
@@ -57,7 +58,7 @@ type Summary = { workspaces: number; companies: number; locations: number; items
 type Workspace = { id: string; code: string; name: string; status: string };
 type Company = { id: string; workspace_id: string; code: string; name: string; status: string; workspace_name?: string };
 type Location = { id: string; company_id: string; code: string; name: string; location_type: string; status: string; company_name?: string };
-type Page = 'dashboard' | 'organization' | 'items' | 'partners' | 'purchase' | 'sales' | 'cash-in' | 'cash-out' | 'item-usage' | 'stock-transfer' | 'stock-opname' | 'inventory-control' | 'bom-production' | 'finance' | 'coa-standard' | 'transactions' | 'control' | 'access' | 'settings';
+type Page = 'dashboard' | 'cash-bank' | 'organization' | 'items' | 'partners' | 'purchase' | 'sales' | 'cash-in' | 'cash-out' | 'item-usage' | 'stock-transfer' | 'stock-opname' | 'inventory-control' | 'bom-production' | 'finance' | 'coa-standard' | 'transactions' | 'control' | 'access' | 'settings';
 type OrganizationTab = 'workspace' | 'company' | 'location';
 
 const locationLabel: Record<string, string> = {
@@ -66,7 +67,7 @@ const locationLabel: Record<string, string> = {
 };
 
 const pageTitles: Record<Page, string> = {
-  dashboard: 'Dashboard', organization: 'Master Organisasi', items: 'Barang & Inventory', partners: 'Supplier & Relasi',
+  dashboard: 'Dashboard', 'cash-bank': 'Kas & Bank', organization: 'Master Organisasi', items: 'Barang & Inventory', partners: 'Supplier & Relasi',
   purchase: 'Invoice Pembelian', sales: 'Data Penjualan / Import POS', 'cash-in': 'Kas & Bank Masuk', 'cash-out': 'Kas & Bank Keluar', 'item-usage': 'Pemakaian Barang', 'stock-transfer': 'Transfer Barang', 'stock-opname': 'Stock Opname',
   'inventory-control': 'Kontrol Stok & Kartu Stok', 'bom-production': 'BOM & Produksi STJ', finance: 'Finance & Accounting Master',
   'coa-standard': 'COA Standard & Mapping', transactions: 'Jurnal / Transaction Engine', control: 'Accounting Control Center',
@@ -171,6 +172,7 @@ export function App() {
           <NavLabel>Finance Control</NavLabel>
           <button className={active === 'purchase' ? 'active' : ''} onClick={() => setActive('purchase')}><ReceiptText size={18}/> Invoice Pembelian</button>
           <button className={active === 'sales' ? 'active' : ''} onClick={() => setActive('sales')}><Store size={18}/> Data Penjualan</button>
+          <button className={active === 'cash-bank' ? 'active' : ''} onClick={() => setActive('cash-bank')} data-testid="nav-cash-bank"><Landmark size={18}/> Kas & Bank</button>
           <button className={active === 'cash-in' ? 'active' : ''} onClick={() => setActive('cash-in')}><CircleDollarSign size={18}/> Kas / Bank Masuk</button>
           <button className={active === 'cash-out' ? 'active' : ''} onClick={() => setActive('cash-out')}><CircleDollarSign size={18}/> Kas / Bank Keluar</button>
           <button className={active === 'item-usage' ? 'active' : ''} onClick={() => setActive('item-usage')}><PackageSearch size={18}/> Pemakaian Barang</button>
@@ -194,6 +196,7 @@ export function App() {
           <NavLabel>Finance Control</NavLabel>
           <button className={active === 'purchase' ? 'active' : ''} onClick={() => setActive('purchase')}><ReceiptText size={18}/> Invoice Pembelian</button>
           <button className={active === 'sales' ? 'active' : ''} onClick={() => setActive('sales')}><Store size={18}/> Data Penjualan</button>
+          <button className={active === 'cash-bank' ? 'active' : ''} onClick={() => setActive('cash-bank')} data-testid="nav-cash-bank"><Landmark size={18}/> Kas & Bank</button>
           <button className={active === 'cash-in' ? 'active' : ''} onClick={() => setActive('cash-in')}><CircleDollarSign size={18}/> Kas / Bank Masuk</button>
           <button className={active === 'cash-out' ? 'active' : ''} onClick={() => setActive('cash-out')}><CircleDollarSign size={18}/> Kas / Bank Keluar</button>
           <button className={active === 'item-usage' ? 'active' : ''} onClick={() => setActive('item-usage')}><PackageSearch size={18}/> Pemakaian Barang</button>
@@ -222,6 +225,7 @@ export function App() {
       {active === 'partners' && clientOnly && <ClientPartnerCenter/>}
       {active === 'purchase' && (clientOnly || canAccounting) && <ClientPurchaseInvoice canVerify={canVerifyTransactions}/>}
       {active === 'sales' && (clientOnly || canAccounting) && <ClientSalesImport canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}
+      {active === 'cash-bank' && (clientOnly || canAccounting) && <CashBankCenter canVerify={canVerifyTransactions} canAccounting={canAccounting}/>}
       {active === 'cash-in' && (clientOnly || canAccounting) && <ClientCashIn canVerify={canVerifyTransactions}/>}
       {active === 'cash-out' && (clientOnly || canAccounting) && <ClientCashOut canVerify={canVerifyTransactions}/>}
       {active === 'item-usage' && (clientOnly || canAccounting) && <ClientItemUsage canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}

@@ -1,8 +1,9 @@
 import Decimal from 'decimal.js';
 import type { PoolClient } from './db.js';
 import { pool } from './db.js';
+import { assertPeriodAllows } from './periodGuard.js';
 
-const ENGINE_VERSION = '0.8';
+const ENGINE_VERSION = '0.9';
 
 type TxHeader = {
   id: string;
@@ -371,6 +372,36 @@ async function buildPlan(client: PoolClient, tx: TxHeader, userId: string) {
       description: `${tx.transaction_type === 'CASH_OUT' ? 'Kas/Bank keluar' : 'Kas/Bank masuk'} ${tx.transaction_number}`,
       locationId: tx.location_id, costCenterId: null, partnerId: tx.partner_id, itemId: null, sourceLineId: null,
     });
+  } else if (tx.transaction_type === 'CASH_TRANSFER') {
+    // Pindahkan uang antar kas/bank: Dr COA tujuan / Cr COA sumber. Satu header = satu reference transfer.
+    if (!tx.financial_account_id) throw new Error('FINANCIAL_ACCOUNT_REQUIRED');
+    const transfer = await client.query<{ transfer_to_financial_account_id: string | null }>(
+      `SELECT transfer_to_financial_account_id FROM transaction_headers WHERE id=$1`, [tx.id],
+    );
+    const targetId = transfer.rows[0]?.transfer_to_financial_account_id;
+    if (!targetId) throw new Error('TRANSFER_TARGET_ACCOUNT_REQUIRED');
+    if (targetId === tx.financial_account_id) throw new Error('TRANSFER_ACCOUNTS_MUST_DIFFER');
+    const accounts = await client.query<{ id: string; coa_account_id: string; name: string }>(
+      `SELECT id,coa_account_id,name FROM financial_accounts WHERE id=ANY($1::uuid[]) AND company_id=$2 AND status='ACTIVE'`,
+      [[tx.financial_account_id, targetId], tx.company_id],
+    );
+    const source = accounts.rows.find(a => a.id === tx.financial_account_id);
+    const target = accounts.rows.find(a => a.id === targetId);
+    if (!source || !target) throw new Error('INVALID_FINANCIAL_ACCOUNT');
+    const total = amount(tx.grand_total);
+    if (total.lte(0)) throw new Error('POSITIVE_TRANSFER_AMOUNT_REQUIRED');
+    addPlanLine(lines, {
+      accountId: target.coa_account_id, debit: total, credit: new Decimal(0),
+      description: `Transfer masuk ${tx.transaction_number} dari ${source.name}`,
+      locationId: tx.location_id, costCenterId: null, partnerId: null, itemId: null, sourceLineId: null,
+      metadata: { transferDirection: 'IN', financialAccountId: target.id },
+    });
+    addPlanLine(lines, {
+      accountId: source.coa_account_id, debit: new Decimal(0), credit: total,
+      description: `Transfer keluar ${tx.transaction_number} ke ${target.name}`,
+      locationId: tx.location_id, costCenterId: null, partnerId: null, itemId: null, sourceLineId: null,
+      metadata: { transferDirection: 'OUT', financialAccountId: source.id },
+    });
   } else if (tx.transaction_type === 'STOCK_USAGE') {
     if (amount(tx.document_discount_amount).gt(0)) throw new Error('STOCK_USAGE_DISCOUNT_NOT_ALLOWED');
     let usageTotal = new Decimal(0);
@@ -454,6 +485,7 @@ export async function verifyTransactionAndGenerateJournal(transactionId: string,
       return journal;
     }
     if (tx.workflow_status !== 'DRAFT') throw new Error(`TRANSACTION_STATUS_MUST_BE_DRAFT_${tx.workflow_status}`);
+    await assertPeriodAllows(client, tx.company_id, tx.transaction_date, 'ACCOUNTING');
 
     const plan = await buildPlan(client, tx, userId);
     const journalNumber = `AJ-${tx.transaction_number}`;

@@ -1,14 +1,17 @@
 import Decimal from 'decimal.js';
 import type { PoolClient } from './db.js';
 import { pool } from './db.js';
+import { assertPeriodAllows } from './periodGuard.js';
 
-const ENGINE_VERSION = '0.9';
+const ENGINE_VERSION = '0.11';
 
 type CashOutHeader = {
   id:string; workspace_id:string; company_id:string; location_id:string|null; financial_account_id:string|null;
   transaction_number:string; transaction_date:string; partner_id:string|null; grand_total:string;
   workflow_status:string; accounting_status:string; cash_out_type:string|null; payee_name:string|null;
 };
+
+type SourceLine = { id:string; line_no:number; description:string|null; line_total:string; location_id:string|null; cost_center_id:string|null; account_id:string|null; expense_category_id:string|null };
 
 function amount(value:string|number|null|undefined) { return new Decimal(value || 0); }
 
@@ -74,6 +77,24 @@ async function markVerified(client:PoolClient, tx:CashOutHeader, userId:string, 
   );
 }
 
+/** Pembayaran yang dihitung sebagai sudah membayar invoice: semua yang belum dibatalkan (DRAFT ikut, agar tidak dobel bayar). */
+export async function recalcInvoicePaymentStatus(client:PoolClient, invoiceId:string) {
+  const result = await client.query<{ grand_total:string; paid:string }>(
+    `SELECT i.grand_total::text,
+            COALESCE((SELECT SUM(a.amount) FROM transaction_allocations a
+                        JOIN transaction_headers p ON p.id=a.source_transaction_id
+                       WHERE a.target_transaction_id=i.id AND a.allocation_type='AP_PAYMENT'
+                         AND p.workflow_status NOT IN ('CANCELLED','VOID')),0)::text paid
+       FROM transaction_headers i WHERE i.id=$1`, [invoiceId],
+  );
+  if (!result.rowCount) return;
+  const remaining = amount(result.rows[0].grand_total).sub(amount(result.rows[0].paid));
+  const paid = amount(result.rows[0].paid);
+  const status = remaining.lte(0.0001) ? 'PAID' : paid.gt(0) ? 'PARTIAL' : 'UNPAID';
+  await client.query(`UPDATE transaction_headers SET payment_status=$1,updated_at=NOW() WHERE id=$2`, [status, invoiceId]);
+  return status;
+}
+
 async function verifyDebtPayment(client:PoolClient, tx:CashOutHeader, userId:string) {
   if (!tx.partner_id) throw new Error('SUPPLIER_REQUIRED');
   const bankCoa = await financialCoa(client,tx);
@@ -97,13 +118,13 @@ async function verifyDebtPayment(client:PoolClient, tx:CashOutHeader, userId:str
          FROM transaction_allocations a
          JOIN transaction_headers p ON p.id=a.source_transaction_id
         WHERE a.target_transaction_id=$1 AND a.allocation_type='AP_PAYMENT'
-          AND p.id<>$2 AND p.workflow_status IN ('FINANCE_VERIFIED','POSTED')`,
+          AND p.id<>$2 AND p.workflow_status NOT IN ('CANCELLED','VOID')`,
       [row.target_transaction_id,tx.id],
     );
     const outstanding = amount(row.grand_total).sub(amount(otherPaid.rows[0]?.paid));
     const allocation = amount(row.amount);
     if (allocation.lte(0)) throw new Error('PAYMENT_ALLOCATION_MUST_BE_POSITIVE');
-    if (allocation.gt(outstanding)) throw new Error(`PAYMENT_EXCEEDS_OUTSTANDING_${row.transaction_number}`);
+    if (allocation.gt(outstanding.add(0.0001))) throw new Error(`PAYMENT_EXCEEDS_OUTSTANDING_${row.transaction_number}`);
     total = total.add(allocation);
     validated.push({ targetId:row.target_transaction_id,invoiceNo:row.transaction_number,allocation,remaining:outstanding.sub(allocation) });
   }
@@ -126,13 +147,59 @@ async function verifyDebtPayment(client:PoolClient, tx:CashOutHeader, userId:str
   );
 
   await markVerified(client,tx,userId,'ACCOUNTING_REVIEW','FINANCE_VERIFY_DEBT_PAYMENT',{ journalId,total:total.toFixed(4) });
-  for (const row of validated) {
+  for (const row of validated) await recalcInvoicePaymentStatus(client,row.targetId);
+  return { journalId,requiresAccountDirection:false };
+}
+
+/**
+ * Membentuk jurnal pengeluaran operasional dari baris yang sudah punya akun (account_id).
+ * Dipakai oleh: (a) verifikasi Finance bila semua baris sudah ter-mapping lewat kategori pengeluaran (AUTO OK),
+ *               (b) arah akun oleh Accounting (PERLU REVIEW -> diarahkan).
+ */
+async function buildOperationalJournal(client:PoolClient, tx:CashOutHeader, lines:SourceLine[], accountOf:(line:SourceLine)=>string|null, directedByAccounting:boolean) {
+  if (lines.some(line => !accountOf(line))) throw new Error('ACCOUNT_DIRECTION_REQUIRED_FOR_ALL_LINES');
+  const accountIds = [...new Set(lines.map(accountOf).filter(Boolean))] as string[];
+  const accounts = await client.query<{ id:string }>(
+    `SELECT id FROM chart_of_accounts WHERE id=ANY($1::uuid[]) AND company_id=$2 AND status='ACTIVE' AND allow_manual_posting=TRUE`,
+    [accountIds,tx.company_id],
+  );
+  if (accounts.rowCount !== accountIds.length) throw new Error('INVALID_ACCOUNT_DIRECTION');
+
+  const bankCoa = await financialCoa(client,tx);
+  const journalId = await createJournalHeader(client,tx);
+  let lineNo = 1;
+  let total = new Decimal(0);
+  for (const line of lines) {
+    const accountId = accountOf(line);
+    if (!accountId) throw new Error(`ACCOUNT_REQUIRED_LINE_${line.line_no}`);
+    const lineAmount = amount(line.line_total);
+    if (lineAmount.lte(0)) throw new Error(`POSITIVE_AMOUNT_REQUIRED_LINE_${line.line_no}`);
+    total = total.add(lineAmount);
+    await client.query(`UPDATE transaction_lines SET line_type='ACCOUNT',account_id=$1 WHERE id=$2`,[accountId,line.id]);
     await client.query(
-      `UPDATE transaction_headers SET payment_status=$1,updated_at=NOW()
-        WHERE id=$2`, [row.remaining.lte(0.0001) ? 'PAID' : 'PARTIAL',row.targetId],
+      `INSERT INTO journal_lines(journal_id,line_no,account_id,debit,credit,description,location_id,cost_center_id,partner_id,source_transaction_line_id,metadata)
+       VALUES($1,$2,$3,$4,0,$5,$6,$7,$8,$9,$10::jsonb)`,
+      [journalId,lineNo++,accountId,lineAmount.toFixed(4),line.description || tx.payee_name || tx.transaction_number,
+       line.location_id || tx.location_id,line.cost_center_id,tx.partner_id,line.id,
+       JSON.stringify({ cashOutType:'OPERATIONAL_EXPENSE',directedByAccounting,expenseCategoryId:line.expense_category_id })],
     );
   }
-  return { journalId,requiresAccountDirection:false };
+  if (!total.eq(amount(tx.grand_total))) throw new Error('CASH_OUT_TOTAL_MISMATCH');
+  await client.query(
+    `INSERT INTO journal_lines(journal_id,line_no,account_id,debit,credit,description,location_id,partner_id,metadata)
+     VALUES($1,$2,$3,0,$4,$5,$6,$7,$8::jsonb)`,
+    [journalId,lineNo,bankCoa,total.toFixed(4),`Kas/Bank keluar ${tx.transaction_number}`,tx.location_id,tx.partner_id,JSON.stringify({ cashOutType:'OPERATIONAL_EXPENSE' })],
+  );
+  return { journalId,total };
+}
+
+async function loadSourceLines(client:PoolClient, txId:string) {
+  const result = await client.query<SourceLine>(
+    `SELECT id,line_no,description,line_total::text,location_id,cost_center_id,account_id,expense_category_id
+       FROM transaction_lines WHERE transaction_id=$1 ORDER BY line_no FOR UPDATE`, [txId],
+  );
+  if (!result.rowCount) throw new Error('CASH_OUT_LINES_REQUIRED');
+  return result.rows;
 }
 
 export async function verifyClientCashOut(transactionId:string,userId:string) {
@@ -147,6 +214,7 @@ export async function verifyClientCashOut(transactionId:string,userId:string) {
       return { journalId:null,requiresAccountDirection:true,existing:true };
     }
     if (tx.workflow_status !== 'DRAFT') throw new Error(`TRANSACTION_STATUS_MUST_BE_DRAFT_${tx.workflow_status}`);
+    await assertPeriodAllows(client,tx.company_id,tx.transaction_date,'ACCOUNTING');
 
     if (tx.cash_out_type === 'DEBT_PAYMENT') {
       const result = await verifyDebtPayment(client,tx,userId);
@@ -155,13 +223,33 @@ export async function verifyClientCashOut(transactionId:string,userId:string) {
     }
     if (tx.cash_out_type !== 'OPERATIONAL_EXPENSE') throw new Error('CASH_OUT_TYPE_REQUIRED');
     await financialCoa(client,tx);
-    const lines = await client.query<{ line_total:string }>(
-      `SELECT line_total::text FROM transaction_lines WHERE transaction_id=$1 ORDER BY line_no`, [tx.id],
-    );
-    if (!lines.rowCount) throw new Error('CASH_OUT_LINES_REQUIRED');
-    const total = lines.rows.reduce((sum,row) => sum.add(amount(row.line_total)),new Decimal(0));
+    const lines = await loadSourceLines(client,tx.id);
+    const total = lines.reduce((sum,row) => sum.add(amount(row.line_total)),new Decimal(0));
     if (!total.eq(amount(tx.grand_total))) throw new Error('CASH_OUT_TOTAL_MISMATCH');
-    await markVerified(client,tx,userId,'NEEDS_ACCOUNT_DIRECTION','FINANCE_VERIFY_OPERATIONAL_EXPENSE',{ total:total.toFixed(4) });
+
+    // Mapping kategori pengeluaran -> COA (dikelola Accounting). Jika semua baris sudah punya akun -> jurnal otomatis (AUTO OK).
+    const categoryIds = [...new Set(lines.map(l => l.expense_category_id).filter(Boolean))] as string[];
+    const mapping = new Map<string,string>();
+    if (categoryIds.length) {
+      const cats = await client.query<{ id:string; account_id:string|null }>(
+        `SELECT ec.id,ec.account_id FROM expense_categories ec
+           JOIN chart_of_accounts coa ON coa.id=ec.account_id AND coa.status='ACTIVE' AND coa.allow_manual_posting=TRUE
+          WHERE ec.id=ANY($1::uuid[]) AND ec.company_id=$2 AND ec.status='ACTIVE'`,
+        [categoryIds,tx.company_id],
+      );
+      cats.rows.forEach(c => { if (c.account_id) mapping.set(c.id,c.account_id); });
+    }
+    const accountOf = (line:SourceLine) => line.account_id || (line.expense_category_id ? mapping.get(line.expense_category_id) || null : null);
+    const allMapped = lines.every(l => Boolean(accountOf(l)));
+
+    if (allMapped) {
+      const { journalId:autoJournalId } = await buildOperationalJournal(client,tx,lines,accountOf,false);
+      await markVerified(client,tx,userId,'ACCOUNTING_REVIEW','FINANCE_VERIFY_OPERATIONAL_EXPENSE',{ total:total.toFixed(4),journalId:autoJournalId,autoMapped:true });
+      await client.query('COMMIT');
+      return { journalId:autoJournalId,requiresAccountDirection:false };
+    }
+
+    await markVerified(client,tx,userId,'NEEDS_ACCOUNT_DIRECTION','FINANCE_VERIFY_OPERATIONAL_EXPENSE',{ total:total.toFixed(4),autoMapped:false });
     await client.query('COMMIT');
     return { journalId:null,requiresAccountDirection:true };
   } catch (error) {
@@ -180,46 +268,13 @@ export async function directOperationalCashOut(transactionId:string,userId:strin
       throw new Error('TRANSACTION_NOT_WAITING_ACCOUNT_DIRECTION');
     }
     if (await existingJournal(client,tx.id)) throw new Error('JOURNAL_ALREADY_EXISTS');
+    await assertPeriodAllows(client,tx.company_id,tx.transaction_date,'ACCOUNTING');
 
-    const sourceLines = await client.query<{ id:string; line_no:number; description:string|null; line_total:string; location_id:string|null; cost_center_id:string|null }>(
-      `SELECT id,line_no,description,line_total::text,location_id,cost_center_id
-         FROM transaction_lines WHERE transaction_id=$1 ORDER BY line_no FOR UPDATE`, [tx.id],
-    );
-    if (!sourceLines.rowCount) throw new Error('CASH_OUT_LINES_REQUIRED');
+    const sourceLines = await loadSourceLines(client,tx.id);
     const assignmentMap = new Map(assignments.map(x => [x.lineId,x.accountId]));
-    if (assignmentMap.size !== sourceLines.rowCount) throw new Error('ACCOUNT_DIRECTION_REQUIRED_FOR_ALL_LINES');
+    if (assignmentMap.size !== sourceLines.length) throw new Error('ACCOUNT_DIRECTION_REQUIRED_FOR_ALL_LINES');
 
-    const accountIds = [...new Set(assignments.map(x => x.accountId))];
-    const accounts = await client.query<{ id:string }>(
-      `SELECT id FROM chart_of_accounts WHERE id=ANY($1::uuid[]) AND company_id=$2 AND status='ACTIVE' AND allow_manual_posting=TRUE`,
-      [accountIds,tx.company_id],
-    );
-    if (accounts.rowCount !== accountIds.length) throw new Error('INVALID_ACCOUNT_DIRECTION');
-
-    const bankCoa = await financialCoa(client,tx);
-    const journalId = await createJournalHeader(client,tx);
-    let lineNo = 1;
-    let total = new Decimal(0);
-    for (const line of sourceLines.rows) {
-      const accountId = assignmentMap.get(line.id);
-      if (!accountId) throw new Error(`ACCOUNT_REQUIRED_LINE_${line.line_no}`);
-      const lineAmount = amount(line.line_total);
-      if (lineAmount.lte(0)) throw new Error(`POSITIVE_AMOUNT_REQUIRED_LINE_${line.line_no}`);
-      total = total.add(lineAmount);
-      await client.query(`UPDATE transaction_lines SET line_type='ACCOUNT',account_id=$1 WHERE id=$2`,[accountId,line.id]);
-      await client.query(
-        `INSERT INTO journal_lines(journal_id,line_no,account_id,debit,credit,description,location_id,cost_center_id,partner_id,source_transaction_line_id,metadata)
-         VALUES($1,$2,$3,$4,0,$5,$6,$7,$8,$9,$10::jsonb)`,
-        [journalId,lineNo++,accountId,lineAmount.toFixed(4),line.description || tx.payee_name || tx.transaction_number,
-         line.location_id || tx.location_id,line.cost_center_id,tx.partner_id,line.id,JSON.stringify({ cashOutType:'OPERATIONAL_EXPENSE',directedByAccounting:true })],
-      );
-    }
-    if (!total.eq(amount(tx.grand_total))) throw new Error('CASH_OUT_TOTAL_MISMATCH');
-    await client.query(
-      `INSERT INTO journal_lines(journal_id,line_no,account_id,debit,credit,description,location_id,partner_id,metadata)
-       VALUES($1,$2,$3,0,$4,$5,$6,$7,$8::jsonb)`,
-      [journalId,lineNo,bankCoa,total.toFixed(4),`Kas/Bank keluar ${tx.transaction_number}`,tx.location_id,tx.partner_id,JSON.stringify({ cashOutType:'OPERATIONAL_EXPENSE' })],
-    );
+    const { journalId } = await buildOperationalJournal(client,tx,sourceLines,line => assignmentMap.get(line.id) || null,true);
     await client.query(
       `UPDATE transaction_headers SET accounting_status='ACCOUNTING_REVIEW',updated_by=$1,updated_at=NOW() WHERE id=$2`,
       [userId,tx.id],
