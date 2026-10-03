@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
 import { canAccessCompany, canAccessLocation, canCreateTransaction, canVerifyTransaction } from './access.js';
-import { verifyClientCashOut } from './cashOutEngine.js';
+import { recalcInvoicePaymentStatus, verifyClientCashOut } from './cashOutEngine.js';
+import { assertPeriodAllows } from './periodGuard.js';
 
 export const clientCashOutRouter = Router();
 clientCashOutRouter.use(requireAuth);
@@ -22,6 +23,12 @@ async function nextCashOutNumber(client:any,companyId:string,date:string) {
   );
   return `KK-${year}-${String(result.rows[0].last_number).padStart(5,'0')}`;
 }
+
+/** Pembayaran yang dihitung: semua yang belum dibatalkan (DRAFT ikut) agar invoice tidak bisa dibayar dua kali. */
+const PAID_SQL=`COALESCE((SELECT SUM(a.amount) FROM transaction_allocations a
+                  JOIN transaction_headers p ON p.id=a.source_transaction_id
+                 WHERE a.target_transaction_id=i.id AND a.allocation_type='AP_PAYMENT'
+                   AND p.workflow_status NOT IN ('CANCELLED','VOID')),0)`;
 
 clientCashOutRouter.get('/financial-accounts', async (req,res) => {
   const companyId=text(req.query.companyId);
@@ -51,14 +58,11 @@ clientCashOutRouter.get('/open-payables', async (req,res) => {
   if (!(await canAccessCompany(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN_COMPANY' });
   const result=await query(
     `SELECT i.id,i.transaction_number,i.transaction_date,i.reference_number,i.due_date,i.grand_total::text,
-            (i.grand_total-COALESCE(SUM(CASE WHEN p.workflow_status IN ('FINANCE_VERIFIED','POSTED') THEN a.amount ELSE 0 END),0))::text outstanding
+            (i.grand_total-${PAID_SQL})::text outstanding
        FROM transaction_headers i
-       LEFT JOIN transaction_allocations a ON a.target_transaction_id=i.id AND a.allocation_type='AP_PAYMENT'
-       LEFT JOIN transaction_headers p ON p.id=a.source_transaction_id
       WHERE i.company_id=$1 AND i.partner_id=$2 AND i.transaction_type='PURCHASE_INVOICE'
         AND i.payment_type='CREDIT' AND i.workflow_status IN ('FINANCE_VERIFIED','POSTED')
-      GROUP BY i.id,i.grand_total
-      HAVING i.grand_total-COALESCE(SUM(CASE WHEN p.workflow_status IN ('FINANCE_VERIFIED','POSTED') THEN a.amount ELSE 0 END),0) > 0.0001
+        AND i.grand_total-${PAID_SQL} > 0.0001
       ORDER BY i.due_date NULLS LAST,i.transaction_date,i.transaction_number`,[companyId,supplierId],
   );
   res.json(result.rows);
@@ -115,6 +119,9 @@ clientCashOutRouter.post('/cash-outs', async (req,res) => {
   if (!company.rowCount) return res.status(404).json({ error:'COMPANY_NOT_FOUND' });
   const workspaceId=company.rows[0].workspace_id;
 
+  try { await assertPeriodAllows(null,companyId,transactionDate,'FINANCE'); }
+  catch (error) { return res.status(409).json({ error:error instanceof Error ? error.message : 'ACCOUNTING_PERIOD_CLOSED' }); }
+
   const location=await query(`SELECT id FROM locations WHERE id=$1 AND company_id=$2 AND status='ACTIVE'`,[locationId,companyId]);
   if (!location.rowCount) return res.status(400).json({ error:'LOCATION_OUTSIDE_COMPANY' });
   if (!(await canAccessLocation(req.sessionUser!.id,locationId))) return res.status(403).json({ error:'LOCATION_FORBIDDEN' });
@@ -141,12 +148,13 @@ clientCashOutRouter.post('/cash-outs', async (req,res) => {
     await client.query('BEGIN');
     const transactionNumber=await nextCashOutNumber(client,companyId,transactionDate);
     let total=0;
+    const categoryNames=new Map<string,string>();
 
     if (cashOutType === 'DEBT_PAYMENT') {
       const targetIds=[...new Set(rawAllocations.map((x:any)=>text(x.invoiceId)).filter(Boolean))] as string[];
       if (!targetIds.length || targetIds.length !== rawAllocations.length) throw new Error('INVALID_PAYMENT_ALLOCATION');
-      const invoices=await client.query<{ id:string;transaction_number:string;grand_total:string;partner_id:string|null }>(
-        `SELECT id,transaction_number,grand_total::text,partner_id FROM transaction_headers
+      const invoices=await client.query<{ id:string;transaction_number:string;grand_total:string;partner_id:string|null;payment_status:string }>(
+        `SELECT id,transaction_number,grand_total::text,partner_id,payment_status FROM transaction_headers
           WHERE id=ANY($1::uuid[]) AND company_id=$2 AND transaction_type='PURCHASE_INVOICE'
             AND payment_type='CREDIT' AND workflow_status IN ('FINANCE_VERIFIED','POSTED') FOR UPDATE`,[targetIds,companyId],
       );
@@ -162,16 +170,26 @@ clientCashOutRouter.post('/cash-outs', async (req,res) => {
           `SELECT COALESCE(SUM(a.amount),0)::text paid FROM transaction_allocations a
             JOIN transaction_headers p ON p.id=a.source_transaction_id
            WHERE a.target_transaction_id=$1 AND a.allocation_type='AP_PAYMENT'
-             AND p.workflow_status IN ('FINANCE_VERIFIED','POSTED')`,[invoiceId],
+             AND p.workflow_status NOT IN ('CANCELLED','VOID')`,[invoiceId],
         );
         const outstanding=Number(invoice.grand_total)-Number(paid.rows[0]?.paid || 0);
+        if (outstanding<=0.0001) throw new Error(`INVOICE_ALREADY_PAID_${invoice.transaction_number}`);
         if (value>outstanding+0.0001) throw new Error(`PAYMENT_EXCEEDS_OUTSTANDING_${invoice.transaction_number}`);
         total+=value;
       }
     } else {
+      const categoryIds=[...new Set(rawLines.map((x:any)=>nullable(x.expenseCategoryId)).filter(Boolean))] as string[];
+      if (categoryIds.length) {
+        const cats=await client.query<{ id:string;name:string }>(
+          `SELECT id,name FROM expense_categories WHERE id=ANY($1::uuid[]) AND company_id=$2 AND status='ACTIVE'`,[categoryIds,companyId],
+        );
+        if (cats.rowCount !== categoryIds.length) throw new Error('INVALID_EXPENSE_CATEGORY');
+        cats.rows.forEach(c=>categoryNames.set(c.id,c.name));
+      }
       for (const line of rawLines) {
         const value=Number(line.amount || 0);
-        if (!text(line.description)) throw new Error('EXPENSE_DESCRIPTION_REQUIRED');
+        const categoryId=nullable(line.expenseCategoryId);
+        if (!text(line.description) && !categoryId) throw new Error('EXPENSE_DESCRIPTION_REQUIRED');
         if (!Number.isFinite(value) || value<=0) throw new Error('POSITIVE_EXPENSE_AMOUNT_REQUIRED');
         const costCenterId=nullable(line.costCenterId);
         if (costCenterId) {
@@ -208,15 +226,18 @@ clientCashOutRouter.post('/cash-outs', async (req,res) => {
           `INSERT INTO transaction_lines(transaction_id,line_no,line_type,description,quantity,unit_price,gross_amount,dpp_amount,tax_amount,line_total,location_id)
            VALUES($1,$2,'MEMO',$3,1,$4,$4,$4,0,$4,$5)`,[transactionId,lineNo++,`Bayar hutang ${invoiceNo}`,value,locationId],
         );
+        await recalcInvoicePaymentStatus(client,invoiceId);
       }
     } else {
       for (let index=0;index<rawLines.length;index+=1) {
         const line=rawLines[index];
         const value=Number(line.amount || 0);
+        const categoryId=nullable(line.expenseCategoryId);
+        const description=text(line.description) || categoryNames.get(categoryId || '') || 'Pengeluaran operasional';
         await client.query(
-          `INSERT INTO transaction_lines(transaction_id,line_no,line_type,description,quantity,unit_price,gross_amount,dpp_amount,tax_amount,line_total,location_id,cost_center_id)
-           VALUES($1,$2,'MEMO',$3,1,$4,$4,$4,0,$4,$5,$6)`,
-          [transactionId,index+1,text(line.description),value,locationId,nullable(line.costCenterId)],
+          `INSERT INTO transaction_lines(transaction_id,line_no,line_type,description,quantity,unit_price,gross_amount,dpp_amount,tax_amount,line_total,location_id,cost_center_id,expense_category_id)
+           VALUES($1,$2,'MEMO',$3,1,$4,$4,$4,0,$4,$5,$6,$7)`,
+          [transactionId,index+1,description,value,locationId,nullable(line.costCenterId),categoryId],
         );
       }
     }
@@ -246,6 +267,7 @@ clientCashOutRouter.post('/cash-outs/:transactionId/verify', async (req,res) => 
     res.json({ ok:true,...result });
   } catch (error) {
     console.error('Verify cash out failed:',error);
-    res.status(400).json({ error:error instanceof Error ? error.message : 'VERIFY_CASH_OUT_FAILED' });
+    const message=error instanceof Error ? error.message : 'VERIFY_CASH_OUT_FAILED';
+    res.status(message.startsWith('ACCOUNTING_PERIOD') ? 409 : 400).json({ error:message });
   }
 });

@@ -28,6 +28,9 @@ import { clientSalesRouter } from './clientSalesRoutes.js';
 import { clientSalesImportProfileRouter } from './clientSalesImportProfileRoutes.js';
 import { accountingCashOutRouter } from './accountingCashOutRoutes.js';
 import { accountingCashInRouter } from './accountingCashInRoutes.js';
+import { cashBankRouter } from './cashBankRoutes.js';
+import { accountingControlRouter } from './accountingControlRoutes.js';
+import { accountingPeriodRouter } from './accountingPeriodRoutes.js';
 import { canWriteCompanyMaster, canWriteWorkspaceMaster, isSystemAdmin } from './access.js';
 
 const app = express();
@@ -237,6 +240,9 @@ app.use('/api/master/coa-standard', coaTemplateRouter);
 app.use('/api/journals', journalRouter);
 app.use('/api/accounting-cash-outs', accountingCashOutRouter);
 app.use('/api/accounting-cash-ins', accountingCashInRouter);
+app.use('/api/cash-bank', cashBankRouter);
+app.use('/api/accounting-control', accountingControlRouter);
+app.use('/api/accounting-periods', accountingPeriodRouter);
 
 // Frontend disajikan oleh container Nginx terpisah (lihat /frontend). Mode single-container lama
 // tetap didukung bila SERVE_STATIC=1 dan folder dist tersedia.

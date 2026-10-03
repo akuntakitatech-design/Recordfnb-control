@@ -16,6 +16,7 @@ import './stockTransfer.css';
 import './clientStockOpname.css';
 import './clientSalesImport.css';
 import './menuGroups.css';
+import './cashBank.css';
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

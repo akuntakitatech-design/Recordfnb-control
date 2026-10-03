@@ -6,6 +6,7 @@ import { requireAuth } from './auth.js';
 import { storage } from './storage.js';
 import { canAccessCompany, canAccessLocation, canCreateTransaction, hasUnrestrictedLocationAccess } from './access.js';
 import { calculateDocument, type DocumentDiscount, type TransactionLineInput } from '../shared/transactionMath.js';
+import { assertPeriodAllows } from './periodGuard.js';
 
 export const clientTransactionRouter = Router();
 clientTransactionRouter.use(requireAuth);
@@ -103,6 +104,9 @@ clientTransactionRouter.post('/purchase-invoices', async (req, res) => {
   );
   if (!company.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
   const workspaceId = company.rows[0].workspace_id;
+
+  try { await assertPeriodAllows(null, companyId, transactionDate, 'FINANCE'); }
+  catch (error) { return res.status(409).json({ error: error instanceof Error ? error.message : 'ACCOUNTING_PERIOD_CLOSED' }); }
 
   const location = await query(
     `SELECT id FROM locations WHERE id=$1 AND company_id=$2 AND status='ACTIVE'`, [locationId, companyId],

@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 import type { PoolClient } from './db.js';
 import { pool } from './db.js';
+import { assertPeriodAllows } from './periodGuard.js';
 
 const ENGINE_VERSION = '0.10';
 
@@ -67,6 +68,7 @@ export async function verifyClientCashIn(transactionId:string,userId:string) {
       return { journalId:null,requiresAccountDirection:true,existing:true };
     }
     if (tx.workflow_status !== 'DRAFT') throw new Error(`TRANSACTION_STATUS_MUST_BE_DRAFT_${tx.workflow_status}`);
+    await assertPeriodAllows(client,tx.company_id,tx.transaction_date,'ACCOUNTING');
     if (!['BUSINESS_RECEIPT','OTHER_RECEIPT'].includes(tx.cash_in_type || '')) throw new Error('CASH_IN_TYPE_REQUIRED');
     await financialCoa(client,tx);
     const lines = await client.query<{ line_total:string }>(

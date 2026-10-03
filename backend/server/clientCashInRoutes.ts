@@ -3,6 +3,7 @@ import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
 import { canAccessCompany, canAccessLocation, canCreateTransaction, canVerifyTransaction } from './access.js';
 import { verifyClientCashIn } from './cashInEngine.js';
+import { assertPeriodAllows } from './periodGuard.js';
 
 export const clientCashInRouter = Router();
 clientCashInRouter.use(requireAuth);
@@ -71,6 +72,9 @@ clientCashInRouter.post('/cash-ins', async (req,res) => {
   const company=await query<{ workspace_id:string }>(`SELECT workspace_id FROM companies WHERE id=$1 AND status='ACTIVE'`,[companyId]);
   if (!company.rowCount) return res.status(404).json({ error:'COMPANY_NOT_FOUND' });
   const workspaceId=company.rows[0].workspace_id;
+
+  try { await assertPeriodAllows(null,companyId,transactionDate,'FINANCE'); }
+  catch (error) { return res.status(409).json({ error:error instanceof Error ? error.message : 'ACCOUNTING_PERIOD_CLOSED' }); }
 
   const location=await query(`SELECT id FROM locations WHERE id=$1 AND company_id=$2 AND status='ACTIVE'`,[locationId,companyId]);
   if (!location.rowCount) return res.status(400).json({ error:'LOCATION_OUTSIDE_COMPANY' });
