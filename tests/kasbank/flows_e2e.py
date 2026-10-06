@@ -21,6 +21,8 @@ TODAY = os.environ.get("TX_DATE", date.today().isoformat())
 TAG = os.environ.get("TEST_TAG", TODAY.replace("-", ""))
 PERIOD_DATE = os.environ.get("PERIOD_DATE", "2000-01-01")
 FLOWS = os.environ.get("FLOWS", "abcd")
+# Role V2: Finance tidak punya akses Accounting Control. ACCOUNTING_ACCESS=0 -> harapkan 403, bucket tidak dicek.
+ACCOUNTING_ACCESS = os.environ.get("ACCOUNTING_ACCESS", "1") == "1"
 
 c = httpx.Client(base_url=BASE, timeout=60)
 failures: list[str] = []
@@ -55,8 +57,17 @@ def accounts():
 
 def overview_bucket(tx_id):
     s, b = call("GET", f"/api/accounting-control/overview?companyId={CO}")
+    if not ACCOUNTING_ACCESS:
+        check(s == 403, f"Accounting Control ditolak untuk role tanpa akses Accounting → {s}")
+        return None
     row = next((r for r in b["rows"] if r["id"] == tx_id), None)
     return row
+
+
+def check_bucket(row, expected, msg):
+    if not ACCOUNTING_ACCESS:
+        return
+    check(row and row["bucket"] == expected, msg)
 
 
 def journal_of(tx_id):
@@ -121,7 +132,7 @@ def flow_a(bca, cat):
     jn, js, _ = journal_of(co["id"])
     row = overview_bucket(co["id"])
     check(bool(jn), f"jurnal terbentuk: {jn} ({js})")
-    check(row and row["bucket"] == "AUTO_OK", f"Accounting Control bucket = {row and row['bucket']}")
+    check_bucket(row, "AUTO_OK", f"Accounting Control bucket = {row and row['bucket']}")
     report["a1"] = {"tx": co["transaction_number"], "saldo_before": before, "saldo_after": after, "journal": jn, "bucket": row and row["bucket"]}
 
     print("   + pengeluaran kategori TEST-LAIN (belum dipetakan) Rp100.000")
@@ -133,7 +144,7 @@ def flow_a(bca, cat):
     s, v = call("POST", f"/api/client-transactions/cash-outs/{co2['id']}/verify")
     check(s == 200, f"verifikasi → {s}")
     row = overview_bucket(co2["id"])
-    check(row and row["bucket"] == "NEEDS_REVIEW", f"bucket = {row and row['bucket']} ({row and row['issue']})")
+    check_bucket(row, "NEEDS_REVIEW", f"bucket = {row and row['bucket']} ({row and row['issue']})")
     report["a2"] = {"tx": co2["transaction_number"], "bucket": row and row["bucket"]}
 
 
