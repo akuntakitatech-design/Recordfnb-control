@@ -21,7 +21,8 @@ import {
 import { storage } from './storage.js';
 import {
   REASONS, VARIANCE_ROLES, cancelSettlement, computeReconciliation, loadLocationMethods, outstandingSettlements, publicRecon, recordSettlement,
-  reopenReconciliation, resolveDifference, verifyReconciliation,
+  reopenReconciliation, resolveDifference, validateClearingAccount, validateFeeAccount, validateVarianceAccount, verifyReconciliation,
+  type VarianceRole,
 } from './salesFlowEngine.js';
 import { invalidatePosCodes, loadPosCodes } from './posPaymentCodes.js';
 
@@ -70,7 +71,8 @@ salesFlowRouter.get('/payment-methods', async (req, res) => {
     rows: r.rows.map(m => {
       const locations = locs.rows.filter(l => l.payment_method_id === m.id).map(l => ({ id: l.location_id, name: l.location_name }));
       // Mapping akun hanya terlihat Accounting. Finance cukup melihat status "sudah/belum diatur Accounting".
-      const mappingReady = m.destination_behavior === 'SETTLEMENT' ? Boolean(m.clearing_account_id) : Boolean(m.financial_account_id);
+      // Siap = akun tujuan lengkap. SETTLEMENT: clearing (aset) + akun beban MDR/Admin Fee wajib diatur Accounting.
+      const mappingReady = m.destination_behavior === 'SETTLEMENT' ? Boolean(m.clearing_account_id && m.fee_account_id) : Boolean(m.financial_account_id);
       const base = { ...m, locations, mapping_ready: mappingReady };
       if (accounting) return base;
       const { clearing_account_id, clearing_account_code, clearing_account_name, fee_account_id, fee_account_code, fee_account_name, ...rest } = base;
@@ -109,9 +111,10 @@ async function savePaymentMethod(req: any, res: any, id: string | null) {
   }
   const locCheck = await query(`SELECT id FROM locations WHERE company_id=$1 AND id=ANY($2::uuid[])`, [companyId, locationIds]);
   if (locCheck.rowCount !== locationIds.length) return res.status(400).json({ error: 'LOCATION_OUTSIDE_COMPANY' });
-  for (const accId of [b.clearingAccountId, b.feeAccountId].map(text).filter(Boolean)) {
-    const ok = await query(`SELECT 1 FROM chart_of_accounts coa WHERE coa.id=$1 AND coa.company_id=$2 AND coa.status='ACTIVE'`, [accId, companyId]).catch(() => ({ rowCount: 0 }));
-    if (!ok.rowCount) return res.status(400).json({ error: 'INVALID_MAPPING_ACCOUNT' });
+  for (const [accId, check] of [[text(b.clearingAccountId), validateClearingAccount], [text(b.feeAccountId), validateFeeAccount]] as const) {
+    if (!accId) continue;
+    const err = await check({ query } as any, companyId, accId).catch(() => 'INVALID_MAPPING_ACCOUNT');
+    if (err) return res.status(400).json({ error: err });
   }
   // 1 kode POS = 1 metode per outlet — cek sebelum menulis apa pun (hindari metode yatim tanpa outlet).
   if (status === 'ACTIVE') {
@@ -207,8 +210,8 @@ salesFlowRouter.put('/variance-accounts', async (req, res) => {
   const companyId = text(b.companyId); const role = text(b.roleCode); const accountId = text(b.accountId);
   if (!companyId || !(await canAccessAccountingCompany(uid(req), companyId))) return res.status(403).json({ error: 'ACCOUNTING_ROLE_REQUIRED' });
   if (!(role in VARIANCE_ROLES) || !accountId) return res.status(400).json({ error: 'VARIANCE_ACCOUNT_FIELDS_REQUIRED' });
-  const ok = await query(`SELECT 1 FROM chart_of_accounts WHERE id=$1 AND company_id=$2 AND status='ACTIVE'`, [accountId, companyId]);
-  if (!ok.rowCount) return res.status(400).json({ error: 'INVALID_MAPPING_ACCOUNT' });
+  const invalid = await validateVarianceAccount({ query } as any, companyId, role as VarianceRole, accountId).catch(() => 'INVALID_MAPPING_ACCOUNT');
+  if (invalid) return res.status(400).json({ error: invalid });
   const workspaceId = await companyWorkspace(companyId);
   const before = await query(`SELECT account_id FROM important_accounts WHERE company_id=$1 AND role_code=$2`, [companyId, role]);
   await query(`INSERT INTO important_accounts(workspace_id,company_id,role_code,account_id) VALUES($1,$2,$3,$4) ON CONFLICT(company_id,role_code) DO UPDATE SET account_id=EXCLUDED.account_id`,

@@ -62,30 +62,32 @@ clientSalesRouter.get('/sales-context', async (req,res) => {
 
   const company = await query<{ workspace_id:string }>('SELECT workspace_id FROM companies WHERE id=$1 AND status=\'ACTIVE\'', [companyId]);
   if (!company.rowCount) return res.status(404).json({ error:'COMPANY_NOT_FOUND' });
-  const [items,mappings] = await Promise.all([
-    query(
-      `SELECT i.id,i.code,i.name,i.base_unit_id,u.code unit_code,i.track_stock,i.can_sell,c.name category_name
-         FROM items i
-         JOIN units u ON u.id=i.base_unit_id
-         JOIN item_categories c ON c.id=i.category_id
-        WHERE i.workspace_id=$1 AND i.status='ACTIVE' AND i.can_sell
-        ORDER BY c.name,i.name`,
-      [company.rows[0].workspace_id],
-    ),
-    query(
-      `SELECT payment_code,label FROM sales_payment_mappings WHERE company_id=$1 ORDER BY payment_code`,
-      [companyId],
-    ),
-  ]);
+  const items = await query(
+    `SELECT i.id,i.code,i.name,i.base_unit_id,u.code unit_code,i.track_stock,i.can_sell,c.name category_name
+       FROM items i
+       JOIN units u ON u.id=i.base_unit_id
+       JOIN item_categories c ON c.id=i.category_id
+      WHERE i.workspace_id=$1 AND i.status='ACTIVE' AND i.can_sell
+      ORDER BY c.name,i.name`,
+    [company.rows[0].workspace_id],
+  );
+  // Status setup pembayaran = master Payment Method Phase 2 per outlet (sumber: payment_methods + payment_method_locations).
+  // Siap: CASH/BANK_DIRECT -> rekening Kas/Bank tujuan aktif; SETTLEMENT -> akun clearing + akun beban MDR/Admin Fee (diatur Accounting).
   const methods = await query(
-    `SELECT pm.id,pm.name,pml.pos_payment_code,pm.destination_behavior,pm.evidence_policy
-       FROM payment_method_locations pml JOIN payment_methods pm ON pm.id=pml.payment_method_id AND pm.status='ACTIVE'
+    `SELECT pm.id,pm.name,pml.pos_payment_code,pm.destination_behavior,pm.evidence_policy,
+            CASE WHEN pm.destination_behavior='SETTLEMENT' THEN (pm.clearing_account_id IS NOT NULL AND pm.fee_account_id IS NOT NULL)
+                 ELSE fa.coa_account_id IS NOT NULL END mapping_ready
+       FROM payment_method_locations pml
+       JOIN payment_methods pm ON pm.id=pml.payment_method_id AND pm.status='ACTIVE' AND pm.company_id=$2
+       LEFT JOIN financial_accounts fa ON fa.id=pm.financial_account_id AND fa.status='ACTIVE'
       WHERE pml.location_id=$1 ORDER BY pm.sort_order,pm.name`,
-    [locationId],
+    [locationId,companyId],
   );
   // reconciliationFlow=true -> verifikasi lewat Rekonsiliasi Penjualan (Phase 2), bukan verifikasi batch langsung.
   const posCodes = (await loadPosCodes()).map(c => ({ code:c.code, label:c.label, aliases:c.aliases, includeInReconciliation:c.include_in_reconciliation }));
-  res.json({ items:items.rows, paymentMappings:mappings.rows, expectedPaymentMappings:posCodes.length, paymentMethods:methods.rows, reconciliationFlow:methods.rowCount > 0, posCodes });
+  const paymentMethods = methods.rows.map(m => ({ ...m, mapping_ready:Boolean(Number(m.mapping_ready)) }));
+  res.json({ items:items.rows, paymentMethods, reconciliationFlow:methods.rowCount > 0, posCodes,
+    paymentSetup:{ activeMethods:paymentMethods.length, readyMethods:paymentMethods.filter(m => m.mapping_ready).length } });
 });
 
 clientSalesRouter.get('/sales-batches', async (req,res) => {

@@ -315,7 +315,7 @@ function Dashboard({ summary, setActive, flags, session }: { summary: Summary | 
   if (flags.isOutlet) {
     const outlets = session.memberships.filter(m => OUTLET_ROLES.includes(m.role_code));
     return <div className="page-content" data-testid="dashboard-outlet">
-      <section className="hero-panel"><div><span className="eyebrow">OUTLET</span><h1>Operasional outlet</h1><p>Catat penjualan/POS, pemakaian barang, transfer dan stock opname untuk outlet yang ditugaskan kepada Anda.</p></div><button className="primary-button compact" onClick={() => setActive('sales')} data-testid="dashboard-open-sales">Import Penjualan <ChevronRight size={17}/></button></section>
+      <section className="hero-panel"><div><span className="eyebrow">OUTLET</span><h1>Operasional outlet</h1><p>Isi Cash Drawer harian (uang aktual & bukti per metode pembayaran), pemakaian barang, transfer dan stock opname untuk outlet yang ditugaskan kepada Anda. Import POS dilakukan oleh Finance / Accounting.</p></div><button className="primary-button compact" onClick={() => setActive('cash-drawer')} data-testid="dashboard-open-cash-drawer">Isi Cash Drawer <ChevronRight size={17}/></button></section>
       <section className="section-card"><div className="section-title"><div><span className="eyebrow">ASSIGNMENT</span><h3>Outlet yang ditugaskan</h3></div></div><div className="role-scope-list" data-testid="outlet-assignment-list">
         {outlets.map((m, index) => <div key={`${m.location_id}-${index}`}><strong>{m.location_name || 'Semua outlet'}</strong><span>{m.company_name || m.workspace_name}</span></div>)}
       </div></section>

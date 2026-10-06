@@ -9,6 +9,37 @@
 >
 > Environment preview: **tetap pakai DB lokal** `fnb_local` + **storage local** sampai Phase 2 selesai UAT dan kita **LOCK**. **Produksi jangan disentuh**.
 
+## STATUS RINGKAS (terbaru)
+- **Phase 1 — Role V2: LOCKED** (commit lokal `d0ecf88`, `bf995c4`).
+- **Phase 2: implementasi SELESAI → tahap FINAL CLEANUP / FINAL VALIDATION** (agent-tested lokal; **belum UAT/approval pemilik**).
+- **Phase 3: BELUM DIMULAI.** Tidak ada push / PR / merge / deploy sebelum pemilik mengetik **"SAVE"**.
+
+### Scope final Phase 2
+POS Import · Cash Drawer · Evidence per Payment Method · Rekonsiliasi POS vs Aktual · Penyelesaian Selisih · Finance Verification ·
+Settlement (full/partial/cancel terkontrol) · MDR/Admin Fee · Cash Drawer Variance · Settlement Variance · Payment Method Master ·
+POS Code Mapping (registry) · integrasi Kas & Bank + Accounting Source.
+
+### Keputusan role (final)
+- **Outlet** → Cash Drawer outlet sendiri (assignment) + bukti; **tidak** import POS (halaman Penjualan Outlet = lihat riwayat saja; CTA dashboard Outlet = "Isi Cash Drawer").
+- **Finance** → operasional Phase 2 (import POS, rekonsiliasi, penyelesaian selisih, verifikasi, settlement); Payment Method **lihat saja**; tidak memilih COA; tidak mengubah master accounting; Accounting Control 403.
+- **Accounting** → akses penuh (Finance + Accounting): Payment Method master, mapping akun clearing/MDR, mapping akun selisih, registry kode POS, reopen verifikasi, batal settlement.
+- **Owner** → read-only. **System Admin** → teknis saja, tanpa izin bisnis.
+
+### Final cleanup (selesai, agent-tested)
+1. Indikator legacy "Setup pembayaran 6/9" dihapus. Indikator baru `Metode Pembayaran: N aktif` + `Setup Pembayaran Lengkap` / `X metode belum lengkap mapping akun`
+   bersumber dari master Payment Method Phase 2 per outlet (`payment_methods` + `payment_method_locations`) via `GET /api/client-transactions/sales-context` → `paymentSetup`.
+   Field legacy `paymentMappings` / `expectedPaymentMappings` dihapus dari response & UI. Literal `6/9` = 0.
+2. Tiga perlakuan accounting terpisah & divalidasi server:
+   - MDR/Admin Fee → `payment_methods.fee_account_id` (akun EXPENSE/OTHER_EXPENSE atau kontra-pendapatan saldo debit), tidak boleh akun selisih.
+   - Cash Drawer Variance → role `CASH_DRAWER_VARIANCE` (default 6900-00-004 Selisih Kas (Cash Drawer)).
+   - Settlement Variance → role `SETTLEMENT_VARIANCE` (default 6900-00-005 Selisih Settlement).
+   - Kedua akun selisih wajib berbeda, harus akun laba/rugi, tidak boleh akun MDR aktif. Clearing settlement wajib akun ASET.
+   - Aturan sama berlaku di jalur generik COA standar (`PUT /api/master/coa-standard/company/:id/important/:role`) + audit log.
+   - Migrasi 007 (aditif, idempotent, **lokal saja**) menambah akun & mapping default; akun lama 6900-00-002 tetap untuk Kas & Bank.
+3. `TEST Dup QRIS` hanya data uji lokal (5 baris INACTIVE tanpa outlet, dari run lama); tidak ada di migrasi/seed.
+4. Hasil: BE/FE typecheck PASS, build PASS, unit 14/14, Phase 2 E2E 169/169, cleanup_verification 24/24, route audit 168/168,
+   role matrix 132/132, Kas & Bank 3 role 0 gagal, testing agent iteration_3 tanpa temuan.
+
 ---
 
 ## 0) Status saat ini (progress / done)
@@ -151,11 +182,8 @@
 - Ada beberapa payment method “TEST Dup QRIS” status INACTIVE (hasil uji duplikasi). Ini **tidak dihapus** (sesuai prinsip no deletion). Untuk DB lokal UAT, bisa dibersihkan lewat mekanisme non-destruktif (mis. set INACTIVE/rename), bukan delete.
 
 ### Belum dikerjakan (Phase 2 remaining)
-- Jalankan **testing agent** dan laporkan **15 skenario wajib** satu-per-satu (bukan hanya total PASS), termasuk bukti upload validation matrix.
-- Dokumentasi final:
-  - update `memory/PRD.md` (keputusan Phase 2 final, khususnya evidence hardening & permission)
-  - rapihkan `plan.md` (dokumen ini) dan catatan audit ringkas
-- Local commits Phase 2 (dipisah per area: migrations/backend, frontend UI, tests/docs) — **belum dilakukan**.
+- UAT pemilik (15 skenario + validasi bukti) dan approval.
+- Setelah "SAVE": push branch + PR. Migrasi 005/006/007 ke production hanya atas instruksi pemilik.
 
 ---
 

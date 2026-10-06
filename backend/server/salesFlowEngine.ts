@@ -301,6 +301,52 @@ async function varianceAccount(exec: Exec, companyId: string, role: VarianceRole
   return r.rows[0]?.account_id || null;
 }
 
+/**
+ * Tiga perlakuan accounting yang WAJIB terpisah:
+ *   MDR/Admin Fee (payment_methods.fee_account_id, akun beban)  ≠  CASH_DRAWER_VARIANCE  ≠  SETTLEMENT_VARIANCE.
+ * Dipakai oleh master Payment Method, master akun selisih, dan endpoint important-accounts generik (COA standar).
+ */
+export const FEE_ACCOUNT_TYPES = ['EXPENSE', 'OTHER_EXPENSE'] as const;
+export const VARIANCE_ACCOUNT_TYPES = ['EXPENSE', 'OTHER_EXPENSE', 'OTHER_INCOME'] as const;
+
+async function accountRow(exec: Exec, companyId: string, accountId: string) {
+  const r = await exec.query<{ account_type: string; normal_balance: string }>(
+    `SELECT account_type,normal_balance FROM chart_of_accounts WHERE id=$1 AND company_id=$2 AND status='ACTIVE'`, [accountId, companyId]);
+  return r.rows[0] || null;
+}
+
+/** null = valid; selain itu kode error. MDR boleh akun beban (EXPENSE/OTHER_EXPENSE) atau kontra-pendapatan bersaldo normal debit. */
+export async function validateFeeAccount(exec: Exec, companyId: string, accountId: string) {
+  const a = await accountRow(exec, companyId, accountId);
+  if (!a) return 'INVALID_MAPPING_ACCOUNT';
+  const contraRevenue = a.account_type === 'REVENUE' && a.normal_balance === 'DEBIT';
+  if (!(FEE_ACCOUNT_TYPES as readonly string[]).includes(a.account_type) && !contraRevenue) return 'FEE_ACCOUNT_MUST_BE_EXPENSE';
+  const v = await exec.query(`SELECT 1 FROM important_accounts WHERE company_id=$1 AND role_code IN ('CASH_DRAWER_VARIANCE','SETTLEMENT_VARIANCE') AND account_id=$2`, [companyId, accountId]);
+  if (v.rowCount) return 'FEE_ACCOUNT_CANNOT_BE_VARIANCE';
+  return null;
+}
+
+/** Clearing settlement = akun aset (piutang/clearing), bukan beban/selisih. */
+export async function validateClearingAccount(exec: Exec, companyId: string, accountId: string) {
+  const a = await accountRow(exec, companyId, accountId);
+  if (!a) return 'INVALID_MAPPING_ACCOUNT';
+  if (a.account_type !== 'ASSET') return 'CLEARING_ACCOUNT_MUST_BE_ASSET';
+  return null;
+}
+
+/** Akun Selisih Kas & Selisih Settlement harus berbeda satu sama lain dan tidak boleh akun MDR/Admin Fee metode mana pun. */
+export async function validateVarianceAccount(exec: Exec, companyId: string, role: VarianceRole, accountId: string) {
+  const a = await accountRow(exec, companyId, accountId);
+  if (!a) return 'INVALID_MAPPING_ACCOUNT';
+  if (!(VARIANCE_ACCOUNT_TYPES as readonly string[]).includes(a.account_type)) return 'VARIANCE_ACCOUNT_MUST_BE_PROFIT_LOSS';
+  const other: VarianceRole = role === 'CASH_DRAWER_VARIANCE' ? 'SETTLEMENT_VARIANCE' : 'CASH_DRAWER_VARIANCE';
+  const o = await exec.query(`SELECT 1 FROM important_accounts WHERE company_id=$1 AND role_code=$2 AND account_id=$3`, [companyId, other, accountId]);
+  if (o.rowCount) return 'VARIANCE_ACCOUNTS_MUST_DIFFER';
+  const f = await exec.query(`SELECT 1 FROM payment_methods WHERE company_id=$1 AND fee_account_id=$2 AND status='ACTIVE'`, [companyId, accountId]);
+  if (f.rowCount) return 'VARIANCE_ACCOUNT_IS_MDR_ACCOUNT';
+  return null;
+}
+
 function methodAccount(m: LocationMethod) {
   return m.destination_behavior === 'SETTLEMENT' ? m.clearing_account_id : m.coa_account_id;
 }
@@ -330,7 +376,7 @@ export async function verifyReconciliation(companyId: string, locationId: string
     const prevNumber = (await client.query<{ reconciliation_number: string | null }>(`SELECT reconciliation_number FROM sales_reconciliations WHERE id=$1`, [header.id])).rows[0]?.reconciliation_number;
     const number = prevNumber ? `${prevNumber.replace(/-R\d+$/, '')}-R${round}` : await nextNumber(client, companyId, 'SALES_RECONCILIATION', 'RS', date);
 
-    // ---- Selisih -> SALES_DIFFERENCE (penyesuaian akun metode ke nilai aktual; sisa bersih ke CASH_BANK_VARIANCE)
+    // ---- Selisih -> SALES_DIFFERENCE (penyesuaian akun metode ke nilai aktual; sisa bersih ke CASH_DRAWER_VARIANCE / Selisih Kas)
     const diffLines = recon.lines.filter(l => l.configured && money(l.difference).abs().gt(EPS));
     let differenceTxId: string | null = null;
     if (diffLines.length) {
@@ -457,7 +503,8 @@ export async function recordSettlement(input: SettlementInput, userId: string) {
     const pm = await client.query(`SELECT pm.*,c.workspace_id FROM payment_methods pm JOIN companies c ON c.id=pm.company_id WHERE pm.id=$1`, [lines[0].payment_method_id]);
     const method = pm.rows[0];
     const variance = await varianceAccount(client, input.companyId, 'SETTLEMENT_VARIANCE');
-    const mappingOk = Boolean(method.clearing_account_id) && (fee.lte(0) || Boolean(method.fee_account_id)) && (difference.abs().lte(EPS) || Boolean(variance));
+    const mappingOk = Boolean(method.clearing_account_id) && (fee.lte(0) || Boolean(method.fee_account_id)) && (difference.abs().lte(EPS) || Boolean(variance))
+      && !(fee.gt(0) && method.fee_account_id && method.fee_account_id === variance); // MDR tidak boleh jatuh ke akun Selisih Settlement
     const module = await settlementModule(client, lines[0].pos_payment_code);
     const txNumber = await nextNumber(client, input.companyId, 'SALES_SETTLEMENT', 'ST', input.settlementDate);
     const tx = await client.query<{ id: string }>(

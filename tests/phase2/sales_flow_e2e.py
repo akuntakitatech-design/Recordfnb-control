@@ -66,14 +66,42 @@ def method(client, name, code, dest, locs, fa=None, evidence="OPTIONAL", clearin
     return j(r).get("id")
 
 # ------------------------------------------------------------------ akun selisih terpisah (Accounting)
-CDV, STV, CBV = acc_id("4401-00-001"), acc_id("6900-00-003"), acc_id("6900-00-002")
+CDV, STV, CBV = acc_id("6900-00-004"), acc_id("6900-00-005"), acc_id("6900-00-002")  # default migrasi 007
+tpl = {r[0]: r[1] for r in sql("SELECT m.role_code,m.account_code FROM coa_template_important_accounts m JOIN coa_templates t ON t.id=m.template_id WHERE t.code='AK_FNB_STANDARD_V1' AND m.role_code IN ('CASH_DRAWER_VARIANCE','SETTLEMENT_VARIANCE')")}
+check("VAR", "Template COA: default Selisih Kas 6900-00-004 & Selisih Settlement 6900-00-005", tpl == {"CASH_DRAWER_VARIANCE": "6900-00-004", "SETTLEMENT_VARIANCE": "6900-00-005"}, tpl)
 r = fin.put("/api/sales-flow/variance-accounts", json={"companyId": CO, "roleCode": "CASH_DRAWER_VARIANCE", "accountId": CDV})
 check("VAR", "Finance tidak bisa set akun selisih", r.status_code == 403, j(r))
 for role, a in (("CASH_DRAWER_VARIANCE", CDV), ("SETTLEMENT_VARIANCE", STV)):
     r = acc.put("/api/sales-flow/variance-accounts", json={"companyId": CO, "roleCode": role, "accountId": a})
     check("VAR", f"Accounting set akun {role}", r.status_code == 200, j(r))
 va = {x["role_code"]: x["account_id"] for x in acc.get(f"/api/sales-flow/variance-accounts?companyId={CO}").json()}
+vrows = acc.get(f"/api/sales-flow/variance-accounts?companyId={CO}").json()
+check("VAR", "Master akun selisih: nama akun Selisih Kas (Cash Drawer) & Selisih Settlement", {x["role_code"]: x["account_name"] for x in vrows} == {"CASH_DRAWER_VARIANCE": "Selisih Kas (Cash Drawer)", "SETTLEMENT_VARIANCE": "Selisih Settlement"}, vrows)
 check("VAR", "Selisih Kas & Selisih Settlement akun terpisah (bukan CASH_BANK_VARIANCE)", va["CASH_DRAWER_VARIANCE"] == CDV and va["SETTLEMENT_VARIANCE"] == STV and CBV not in va.values(), va)
+# Mapping akun selisih dapat diubah Accounting dari master, Finance/Owner/Outlet tidak
+ALT_CDV, ALT_STV = acc_id("6900-00-002"), acc_id("6900-00-003")
+vmap = lambda: {x["role_code"]: x["account_id"] for x in acc.get(f"/api/sales-flow/variance-accounts?companyId={CO}").json()}
+for role, alt, orig in (("CASH_DRAWER_VARIANCE", ALT_CDV, CDV), ("SETTLEMENT_VARIANCE", ALT_STV, STV)):
+    r = acc.put("/api/sales-flow/variance-accounts", json={"companyId": CO, "roleCode": role, "accountId": alt})
+    check("VAR", f"Accounting ubah akun {role} -> akun lain", r.status_code == 200 and vmap()[role] == alt, j(r))
+    r = acc.put("/api/sales-flow/variance-accounts", json={"companyId": CO, "roleCode": role, "accountId": orig})
+    check("VAR", f"Accounting kembalikan akun {role} ke default", r.status_code == 200 and vmap()[role] == orig, j(r))
+    for who, c in (("Finance", fin), ("Owner", own), ("Outlet", out)):
+        r = c.put("/api/sales-flow/variance-accounts", json={"companyId": CO, "roleCode": role, "accountId": alt})
+        check("VAR", f"{who} ubah akun {role} -> 403", r.status_code == 403, j(r))
+    r = fin.put(f"/api/master/coa-standard/company/{CO}/important/{role}", json={"accountId": alt})
+    check("VAR", f"Finance ubah {role} via COA standar -> 403", r.status_code == 403, j(r))
+for who, c in (("Finance", fin), ("Owner", own), ("Outlet", out)):
+    r = c.get(f"/api/sales-flow/variance-accounts?companyId={CO}")
+    check("VAR", f"{who} tidak membaca konfigurasi akun selisih (COA) -> 403", r.status_code == 403, r.status_code)
+check("VAR", "Mapping akun selisih tidak berubah oleh percobaan non-Accounting", vmap() == {"CASH_DRAWER_VARIANCE": CDV, "SETTLEMENT_VARIANCE": STV}, vmap())
+r = acc.put("/api/sales-flow/variance-accounts", json={"companyId": CO, "roleCode": "SETTLEMENT_VARIANCE", "accountId": CDV})
+check("VAR", "Selisih Settlement tidak boleh sama dengan Selisih Kas", r.status_code == 400 and j(r).get("error") == "VARIANCE_ACCOUNTS_MUST_DIFFER", j(r))
+r = acc.put(f"/api/master/coa-standard/company/{CO}/important/CASH_DRAWER_VARIANCE", json={"accountId": STV})
+check("VAR", "Jalur COA standar juga menolak akun selisih yang sama", r.status_code == 400 and j(r).get("error") == "VARIANCE_ACCOUNTS_MUST_DIFFER", j(r))
+r = acc.put("/api/sales-flow/variance-accounts", json={"companyId": CO, "roleCode": "CASH_DRAWER_VARIANCE", "accountId": acc_id("1103-00-099")})
+check("VAR", "Akun selisih harus akun laba/rugi (aset ditolak)", r.status_code == 400 and j(r).get("error") == "VARIANCE_ACCOUNT_MUST_BE_PROFIT_LOSS", j(r))
+check("VAR", "Mapping akhir tetap default terpisah", vmap() == {"CASH_DRAWER_VARIANCE": CDV, "SETTLEMENT_VARIANCE": STV}, vmap())
 
 PM = {
     "CASH_MN": method(acc, "TEST Cash MN", "CASH", "CASH_DIRECT", [MN], KAS),
@@ -92,6 +120,19 @@ r = fin.get(f"/api/sales-flow/payment-methods?companyId={CO}")
 check("S9", "Finance tidak melihat akun clearing/MDR", r.status_code == 200 and all("clearing_account_id" not in m for m in r.json()["rows"]), r.status_code)
 r = acc.post("/api/sales-flow/payment-methods", json={"companyId": CO, "name": "TEST Dup QRIS", "posPaymentCode": "QRIS", "destinationBehavior": "SETTLEMENT", "locationIds": [MN]})
 check("PM", "1 kode POS = 1 metode per outlet", r.status_code == 409, j(r))
+# MDR/Admin Fee = akun beban sendiri (bukan akun selisih); clearing = aset
+qbody = lambda clearing, fee: {"companyId": CO, "name": "TEST QRIS BCA", "posPaymentCode": "QRIS", "destinationBehavior": "SETTLEMENT", "financialAccountId": BCA, "evidencePolicy": "REQUIRED", "locationIds": [MN], "clearingAccountId": clearing, "feeAccountId": fee}
+for label, fee, err in (("Selisih Kas", CDV, "FEE_ACCOUNT_CANNOT_BE_VARIANCE"), ("Selisih Settlement", STV, "FEE_ACCOUNT_CANNOT_BE_VARIANCE"), ("akun aset", CLR_QRIS, "FEE_ACCOUNT_MUST_BE_EXPENSE")):
+    r = acc.put(f"/api/sales-flow/payment-methods/{PM['QRIS']}", json=qbody(CLR_QRIS, fee))
+    check("MDR", f"Akun MDR = {label} ditolak", r.status_code == 400 and j(r).get("error") == err, j(r))
+r = acc.put(f"/api/sales-flow/payment-methods/{PM['QRIS']}", json=qbody(FEE, FEE))
+check("MDR", "Akun clearing harus aset (akun beban ditolak)", r.status_code == 400 and j(r).get("error") == "CLEARING_ACCOUNT_MUST_BE_ASSET", j(r))
+r = acc.put("/api/sales-flow/variance-accounts", json={"companyId": CO, "roleCode": "SETTLEMENT_VARIANCE", "accountId": FEE})
+check("MDR", "Akun selisih tidak boleh akun MDR yang dipakai metode", r.status_code == 400 and j(r).get("error") == "VARIANCE_ACCOUNT_IS_MDR_ACCOUNT", j(r))
+r = fin.put(f"/api/sales-flow/payment-methods/{PM['QRIS']}", json=qbody(CLR_QRIS, FEE))
+check("MDR", "Finance tidak bisa memilih/mengubah akun MDR", r.status_code == 403, j(r))
+pmq = next(m for m in acc.get(f"/api/sales-flow/payment-methods?companyId={CO}").json()["rows"] if m["id"] == PM["QRIS"])
+check("MDR", "Mapping QRIS tetap: clearing aset + MDR akun beban (tidak berubah oleh percobaan gagal)", pmq["clearing_account_id"] == CLR_QRIS and pmq["fee_account_id"] == FEE and pmq["mapping_ready"], (pmq["clearing_account_code"], pmq["fee_account_code"]))
 codes = {c["code"]: c for c in fin.get(f"/api/sales-flow/pos-codes?companyId={CO}").json()}
 check("REG", "Registry kode POS memuat ShopeeFood & Debit/EDC (Kartu)", "SHOPEEFOOD" in codes and "CARD" in codes and "DEBIT" in codes["CARD"]["aliases"] and "EDC" in codes["CARD"]["aliases"], list(codes))
 check("REG", "Compliment di registry: tidak ikut rekonsiliasi", codes["COMPLIMENT"]["include_in_reconciliation"] is False)
@@ -101,6 +142,11 @@ if "TESTPAY" not in codes:
     r = acc.post("/api/sales-flow/pos-codes", json={"companyId": CO, "code": "TESTPAY", "label": "Test Pay (e-wallet)", "methodType": "EWALLET", "aliases": "TESTWALLET"})
     check("REG", "Accounting menambah kode POS baru tanpa ubah kode program", r.status_code == 201, j(r))
 PM["TESTPAY"] = method(acc, "TEST Wallet QA2", "TESTPAY", "SETTLEMENT", [QA2], BCA, "OPTIONAL", CLR_QRIS, FEE)
+ctx = fin.get(f"/api/client-transactions/sales-context?companyId={CO}&locationId={MN}").json()
+n_mn = int(sql(f"SELECT COUNT(*) FROM payment_method_locations pml JOIN payment_methods pm ON pm.id=pml.payment_method_id AND pm.status='ACTIVE' WHERE pml.location_id='{MN}'")[0][0])
+check("PMS", "Status setup pembayaran Penjualan memakai Payment Method Phase 2 (aktif & siap per outlet)", ctx.get("paymentSetup") == {"activeMethods": n_mn, "readyMethods": n_mn} and n_mn >= 4, ctx.get("paymentSetup"))
+ctx2 = fin.get(f"/api/client-transactions/sales-context?companyId={CO}&locationId={QA2}").json()
+check("PMS", "Status setup outlet 2 berbeda (konfigurasi outlet sendiri)", ctx2.get("paymentSetup", {}).get("activeMethods") == len([m for m in ctx2.get("paymentMethods", [])]) and {m["name"] for m in ctx2["paymentMethods"]} >= {"TEST ShopeeFood", "TEST Debit BCA"}, ctx2.get("paymentSetup"))
 
 # ------------------------------------------------------------------ POS import (multi tanggal -> dipecah per tanggal)
 used = {r[0] for r in sql(f"SELECT DISTINCT business_date FROM sales_reconciliations WHERE location_id IN ('{MN}','{QA2}') UNION SELECT DISTINCT business_date FROM cash_drawers WHERE location_id IN ('{MN}','{QA2}')")}
@@ -372,6 +418,16 @@ check("VAR", "Selisih kas memakai akun Selisih Kas (bukan CASH_BANK_VARIANCE)", 
 check("VAR", "Selisih settlement memakai akun Selisih Settlement; MDR di akun biaya", STV in acct(s6d) and FEE in acct(s6d) and CBV not in acct(s6d))
 bal = sql(f"SELECT COUNT(*) FROM journal_headers jh WHERE jh.journal_type IN ('AUTO_SALES_SETTLEMENT','AUTO_SALES_DIFFERENCE') AND jh.engine_version LIKE 'phase2-%' AND (SELECT ROUND(SUM(debit)-SUM(credit),2) FROM journal_lines WHERE journal_id=jh.id)<>0")[0][0]
 check("JRN", "Semua jurnal settlement/selisih seimbang", int(bal) == 0, bal)
+jl = lambda txid: [(r[0], float(r[1]), float(r[2])) for r in sql(f"SELECT jl.account_id,jl.debit,jl.credit FROM journal_lines jl JOIN journal_headers jh ON jh.id=jl.journal_id WHERE jh.source_transaction_id='{txid}' AND jh.status<>'VOID' ORDER BY jl.line_no")]
+BCA_COA = sql(f"SELECT coa_account_id FROM financial_accounts WHERE id='{BCA}'")[0][0]
+s4j = jl(s4)
+check("MDR", "S4 jurnal: Bank D 99.300, Beban MDR D 700, Clearing QRIS K 100.000", sorted(s4j) == sorted([(BCA_COA, 99300.0, 0.0), (FEE, 700.0, 0.0), (CLR_QRIS, 0.0, 100000.0)]), s4j)
+check("MDR", "S4 MDR bukan selisih: tidak ada baris Selisih Kas/Settlement", not ({CDV, STV, CBV} & {a for a, _, _ in s4j}), s4j)
+s6j = jl(s6d)
+check("VAR", "S6 jurnal: Bank D 40rb, MDR D 9rb, Selisih Settlement D 1rb, Clearing K 50rb", sorted(s6j) == sorted([(BCA_COA, 40000.0, 0.0), (FEE, 9000.0, 0.0), (STV, 1000.0, 0.0), (CLR_OJOL, 0.0, 50000.0)]), s6j)
+check("VAR", "S6 tidak memakai akun Selisih Kas", CDV not in {a for a, _, _ in s6j})
+dj = jl(diff_tx)
+check("VAR", "Selisih Cash Drawer -> akun Selisih Kas saja (bukan Settlement/MDR)", CDV in {a for a, _, _ in dj} and not ({STV, FEE, CBV} & {a for a, _, _ in dj}), dj)
 
 # ------------------------------------------------------------------ report
 fails = [r for r in results if not r[2]]

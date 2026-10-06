@@ -11,7 +11,11 @@ type Method = {
   locations: Array<{ id: string; name: string }>;
 };
 type PosCode = { code: string; label: string; aliases: string[]; method_type: string; include_in_reconciliation: boolean; status: string };
-type Coa = { id: string; code: string; name: string; status: string };
+type Coa = { id: string; code: string; name: string; status: string; account_type?: string; normal_balance?: string };
+// Filter akun per peran (server tetap memvalidasi): clearing = aset; MDR = beban (atau kontra-pendapatan saldo debit); selisih = akun laba/rugi.
+const isClearing = (a: Coa) => !a.account_type || a.account_type === 'ASSET';
+const isFee = (a: Coa) => !a.account_type || ['EXPENSE', 'OTHER_EXPENSE'].includes(a.account_type) || (a.account_type === 'REVENUE' && a.normal_balance === 'DEBIT');
+const isVariance = (a: Coa) => !a.account_type || ['EXPENSE', 'OTHER_EXPENSE', 'OTHER_INCOME'].includes(a.account_type);
 type Account = { id: string; name: string; account_kind: string };
 type Variance = { role_code: string; label: string; account_id: string | null; account_code: string | null; account_name: string | null };
 type Form = { id: string | null; name: string; posPaymentCode: string; destinationBehavior: string; financialAccountId: string; evidencePolicy: string; locationIds: string[]; clearingAccountId: string; feeAccountId: string; status: string; sortOrder: number };
@@ -75,7 +79,7 @@ export function PaymentMethodCenter({ canEdit }: { canEdit: boolean }) {
   }
   const edit = (m: Method) => setForm({ id: m.id, name: m.name, posPaymentCode: m.pos_payment_code, destinationBehavior: m.destination_behavior, financialAccountId: m.financial_account_id || '', evidencePolicy: m.evidence_policy,
     locationIds: m.locations.map(l => l.id), clearingAccountId: m.clearing_account_id || '', feeAccountId: m.fee_account_id || '', status: m.status, sortOrder: m.sort_order });
-  const coaSelect = (value: string, onChange: (v: string) => void, testid: string) => <select value={value} onChange={e => onChange(e.target.value)} data-testid={testid}><option value="">Pilih akun</option>{coa.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select>;
+  const coaSelect = (value: string, onChange: (v: string) => void, testid: string, keep: (a: Coa) => boolean = () => true) => <select value={value} onChange={e => onChange(e.target.value)} data-testid={testid}><option value="">Pilih akun</option>{coa.filter(a => a.id === value || keep(a)).map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select>;
 
   return <div className="page-content sf-page" data-testid="payment-method-page">
     <section className="section-card">
@@ -103,8 +107,8 @@ export function PaymentMethodCenter({ canEdit }: { canEdit: boolean }) {
 
       {canEdit && <div className="sf-two-col">
         <div data-testid="pm-variance-section"><h4>Akun Selisih (terpisah)</h4>
-          <div className="helper-box">Selisih Kas dipakai untuk kurang/lebih uang Cash Drawer vs POS. Selisih Settlement untuk beda penerimaan channel. MDR/admin fee tetap di akun biaya per metode.</div>
-          {variance.map(v => <label key={v.role_code} className="sf-variance-row">{v.label}{coaSelect(v.account_id || '', id => id && void saveVariance(v.role_code, id), `pm-variance-${v.role_code}`)}{!v.account_id && <small className="sf-error-text">Belum diatur — transaksi selisih akan berstatus Needs Review.</small>}</label>)}
+          <div className="helper-box">Selisih Kas dipakai untuk kurang/lebih uang Cash Drawer vs POS. Selisih Settlement untuk beda penerimaan channel. MDR/Admin Fee tetap di akun beban per metode (bukan selisih). Kedua akun selisih harus berbeda dan tidak boleh sama dengan akun MDR.</div>
+          {variance.map(v => <label key={v.role_code} className="sf-variance-row">{v.label}{coaSelect(v.account_id || '', id => id && void saveVariance(v.role_code, id), `pm-variance-${v.role_code}`, isVariance)}{!v.account_id && <small className="sf-error-text">Belum diatur — transaksi selisih akan berstatus Needs Review.</small>}</label>)}
         </div>
         <div data-testid="pm-poscode-section"><h4>Kode Pembayaran POS (registry)</h4>
           <div className="data-table-wrap"><table className="sf-table"><thead><tr><th>Kode</th><th>Label</th><th>Alias header/nilai POS</th><th>Rekonsiliasi</th></tr></thead><tbody>
@@ -128,8 +132,8 @@ export function PaymentMethodCenter({ canEdit }: { canEdit: boolean }) {
         <label>{form.destinationBehavior === 'SETTLEMENT' ? 'Rekening penerima default' : 'Rekening Kas/Bank tujuan'}<select value={form.financialAccountId} onChange={e => setForm({ ...form, financialAccountId: e.target.value })} data-testid="pm-form-account"><option value="">{form.destinationBehavior === 'SETTLEMENT' ? '(opsional)' : 'Pilih rekening'}</option>{accounts.filter(a => form.destinationBehavior === 'CASH_DIRECT' ? a.account_kind === 'CASH' : a.account_kind !== 'CASH' || form.destinationBehavior === 'SETTLEMENT').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
         <label>Bukti foto<select value={form.evidencePolicy} onChange={e => setForm({ ...form, evidencePolicy: e.target.value })} data-testid="pm-form-evidence"><option value="OPTIONAL">Opsional</option><option value="REQUIRED">Wajib</option></select></label>
         <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} data-testid="pm-form-status"><option value="ACTIVE">Aktif</option><option value="INACTIVE">Nonaktif</option></select></label>
-        {form.destinationBehavior === 'SETTLEMENT' && <><label>Akun clearing / piutang settlement{coaSelect(form.clearingAccountId, v => setForm({ ...form, clearingAccountId: v }), 'pm-form-clearing')}</label>
-          <label>Akun biaya MDR / komisi{coaSelect(form.feeAccountId, v => setForm({ ...form, feeAccountId: v }), 'pm-form-fee')}</label></>}
+        {form.destinationBehavior === 'SETTLEMENT' && <><label>Akun clearing / piutang settlement{coaSelect(form.clearingAccountId, v => setForm({ ...form, clearingAccountId: v }), 'pm-form-clearing', isClearing)}</label>
+          <label>Akun beban MDR / Admin Fee / komisi{coaSelect(form.feeAccountId, v => setForm({ ...form, feeAccountId: v }), 'pm-form-fee', isFee)}</label></>}
       </div>
       <div className="sf-outlet-picks" data-testid="pm-form-outlets"><span>Berlaku di outlet (1 kode POS = 1 metode per outlet):</span>{outlets.map(l => <label key={l.id} className="inline-check"><input type="checkbox" checked={form.locationIds.includes(l.id)} onChange={e => setForm({ ...form, locationIds: e.target.checked ? [...form.locationIds, l.id] : form.locationIds.filter(x => x !== l.id) })} data-testid={`pm-form-outlet-${l.id}`}/> {l.name}</label>)}</div>
       <div className="modal-actions"><button className="secondary-button" onClick={() => setForm(null)} data-testid="pm-form-cancel">Batal</button><button className="primary-button" disabled={busy || !form.name || !form.locationIds.length} onClick={() => void save()} data-testid="pm-form-save"><Save size={15}/> Simpan</button></div>
