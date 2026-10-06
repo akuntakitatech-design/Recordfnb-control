@@ -181,6 +181,13 @@ POS Code Mapping (registry) · integrasi Kas & Bank + Accounting Source.
 #### I. Local test residue (tidak dihapus)
 - Ada beberapa payment method “TEST Dup QRIS” status INACTIVE (hasil uji duplikasi). Ini **tidak dihapus** (sesuai prinsip no deletion). Untuk DB lokal UAT, bisa dibersihkan lewat mekanisme non-destruktif (mis. set INACTIVE/rename), bukan delete.
 
+### Cleanup terakhir (sebelum PR)
+- Master Payment Method default hanya menampilkan metode **aktif**; Accounting punya toggle **Tampilkan Nonaktif** (data nonaktif mis. `TEST Dup QRIS` tidak dihapus). Finance hanya melihat metode aktif, tanpa toggle.
+- Menu Penjualan Outlet tetap **view-only** untuk outlet sendiri (tanpa upload/paste).
+
+### Backlog (BELUM dikerjakan — jangan dikerjakan sebelum diminta)
+- **Variance Summary Report**: ringkasan harian per outlet untuk Selisih Kas, Selisih Settlement, dan MDR/Admin Fee.
+
 ### Belum dikerjakan (Phase 2 remaining)
 - UAT pemilik (15 skenario + validasi bukti) dan approval.
 - Setelah "SAVE": push branch + PR. Migrasi 005/006/007 ke production hanya atas instruksi pemilik.

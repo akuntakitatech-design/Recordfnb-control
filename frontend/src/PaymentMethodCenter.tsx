@@ -36,6 +36,8 @@ export function PaymentMethodCenter({ canEdit }: { canEdit: boolean }) {
   const [newCode, setNewCode] = useState<{ code: string; label: string; methodType: string; aliases: string } | null>(null);
   const [banner, setBanner] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // Default hanya metode aktif. Data nonaktif (mis. sisa uji) tidak dihapus — Accounting dapat menampilkannya lewat toggle.
+  const [showInactive, setShowInactive] = useState(false);
 
   useEffect(() => { loadOrg().then(o => { setCompanies(o.companies); setLocations(o.locations); setCompanyId(o.companies[0]?.id || ''); }).catch(e => setBanner({ kind: 'error', message: flowError(e) })); }, []);
   async function refresh() {
@@ -54,6 +56,8 @@ export function PaymentMethodCenter({ canEdit }: { canEdit: boolean }) {
   }
   useEffect(() => { void refresh(); }, [companyId]);
 
+  const inactiveCount = methods.filter(m => m.status !== 'ACTIVE').length;
+  const visibleMethods = canEdit && showInactive ? methods : methods.filter(m => m.status === 'ACTIVE');
   const reconCodes = codes.filter(c => c.include_in_reconciliation && c.status === 'ACTIVE');
   const codeLabel = (code: string) => codes.find(c => c.code === code)?.label || code;
   const outlets = locations.filter(l => l.company_id === companyId);
@@ -88,13 +92,14 @@ export function PaymentMethodCenter({ canEdit }: { canEdit: boolean }) {
         <div className="heading-actions">
           <select value={companyId} onChange={e => setCompanyId(e.target.value)} data-testid="pm-company-select">{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
           <button className="secondary-button compact" onClick={() => void refresh()} data-testid="pm-refresh"><RefreshCw size={15}/></button>
+          {canEdit && <label className="inline-check" data-testid="pm-show-inactive-label"><input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} data-testid="pm-show-inactive"/> Tampilkan Nonaktif ({inactiveCount})</label>}
           {canEdit && <button className="primary-button compact" onClick={() => setForm({ ...blank, locationIds: outlets.slice(0, 1).map(l => l.id) })} data-testid="pm-add-btn"><Plus size={15}/> Tambah Metode</button>}
         </div>
       </div>
       {banner && <div className={banner.kind === 'ok' ? 'success-banner sf-banner' : 'form-error sf-banner'} data-testid={banner.kind === 'ok' ? 'pm-success-banner' : 'pm-error-banner'}>{banner.kind === 'ok' && <CheckCircle2 size={17}/>}<span>{banner.message}</span><button className="sf-banner-close" onClick={() => setBanner(null)} data-testid="pm-banner-close">×</button></div>}
 
       <div className="data-table-wrap"><table className="sf-table" data-testid="pm-table"><thead><tr><th>Metode</th><th>Kode POS</th><th>Outlet</th><th>Tujuan Uang</th><th>Bukti</th><th>Mapping Akun</th><th>Status</th>{canEdit && <th></th>}</tr></thead><tbody>
-        {methods.map(m => <tr key={m.id} data-testid={`pm-row-${m.code}`}>
+        {visibleMethods.map(m => <tr key={m.id} data-testid={`pm-row-${m.code}`}>
           <td><strong>{m.name}</strong><small className="journal-meta">{m.code}</small></td><td>{codeLabel(m.pos_payment_code)}</td><td>{m.locations.map(l => l.name).join(', ') || '—'}</td>
           <td>{destinationLabel[m.destination_behavior]}{m.financial_account_name && <small className="journal-meta">{m.financial_account_name}</small>}</td>
           <td><span className={m.evidence_policy === 'REQUIRED' ? 'sf-tag warn' : 'sf-tag muted'}>{m.evidence_policy === 'REQUIRED' ? 'Wajib' : 'Opsional'}</span></td>
@@ -103,7 +108,7 @@ export function PaymentMethodCenter({ canEdit }: { canEdit: boolean }) {
           <td>{m.status === 'ACTIVE' ? <span className="sf-status good">Aktif</span> : <span className="sf-status muted">Nonaktif</span>}</td>
           {canEdit && <td><button className="icon-button" onClick={() => edit(m)} data-testid={`pm-edit-${m.code}`}><Pencil size={14}/></button></td>}
         </tr>)}
-      </tbody></table>{!methods.length && <div className="empty-state"><span>Belum ada metode pembayaran.</span></div>}</div>
+      </tbody></table>{!visibleMethods.length && <div className="empty-state" data-testid="pm-empty"><span>{methods.length ? 'Tidak ada metode aktif.' : 'Belum ada metode pembayaran.'}</span></div>}</div>
 
       {canEdit && <div className="sf-two-col">
         <div data-testid="pm-variance-section"><h4>Akun Selisih (terpisah)</h4>
