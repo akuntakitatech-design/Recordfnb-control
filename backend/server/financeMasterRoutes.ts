@@ -21,7 +21,7 @@ financeMasterRouter.get('/financial-accounts', async (req, res) => {
        LEFT JOIN locations l ON l.id=fa.location_id
        JOIN chart_of_accounts coa ON coa.id=fa.coa_account_id
       WHERE ($1='' OR fa.company_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (
             SELECT 1 FROM workspace_memberships wm
              WHERE wm.user_id=$2 AND wm.workspace_id=fa.workspace_id AND wm.status='ACTIVE'

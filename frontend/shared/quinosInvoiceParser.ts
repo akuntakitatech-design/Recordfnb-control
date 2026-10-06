@@ -1,4 +1,5 @@
-export type QuinosPaymentCode = 'CASH' | 'QRIS' | 'TRANSFER' | 'COMPLIMENT' | 'GOFOOD' | 'GRABFOOD';
+/** Kode pembayaran POS — mengikuti registry pos_payment_codes (CASH, QRIS, CARD, SHOPEEFOOD, ...). */
+export type QuinosPaymentCode = string;
 
 export type QuinosSaleRow = {
   saleDate:string;
@@ -18,6 +19,10 @@ export type QuinosSaleRow = {
   compliment:string;
   gofood:string;
   grabfood:string;
+  card?:string;
+  shopeefood?:string;
+  /** Semua pembayaran per kode registry (sumber utama; field di atas dipertahankan untuk kompatibilitas). */
+  payments?:Record<string,string>;
 };
 
 export type QuinosInvoiceAudit = {
@@ -46,14 +51,31 @@ const metadataLabels = new Set(['INVOICE','CASHIER','TYPE','PAX','OPENED','TBL',
 const footerLabels = new Set(['SUBTOTAL','SERVICE','TAX','DISCOUNT','TOTAL','GRANDTOTAL','ROUNDING','CHANGE']);
 const ignoredItemCodes = new Set(['OM000']);
 
-const paymentAliases:Record<string,QuinosPaymentCode> = {
+const DEFAULT_PAYMENT_ALIASES:Record<string,QuinosPaymentCode> = {
   CASH:'CASH',TUNAI:'CASH',
   QRIS:'QRIS',QRCODE:'QRIS',
   TRANSFER:'TRANSFER',BANKTRANSFER:'TRANSFER',
   COMPLIMENT:'COMPLIMENT',COMPLIMENTARY:'COMPLIMENT',
   GOFOOD:'GOFOOD',GOJEKFOOD:'GOFOOD',
   GRABFOOD:'GRABFOOD',
+  SHOPEEFOOD:'SHOPEEFOOD',
+  CARD:'CARD',DEBIT:'CARD',EDC:'CARD',KARTU:'CARD',DEBITCARD:'CARD',KARTUDEBIT:'CARD',CREDITCARD:'CARD',KARTUKREDIT:'CARD',
 };
+let paymentAliases:Record<string,QuinosPaymentCode> = { ...DEFAULT_PAYMENT_ALIASES };
+
+/**
+ * Alias tambahan dari registry kode pembayaran POS (server: pos_payment_codes). Menambah metode baru
+ * cukup lewat registry — parser tidak perlu diubah.
+ */
+export function configureQuinosPaymentAliases(registry:Array<{code:string;aliases?:string[]}>){
+  const next:Record<string,QuinosPaymentCode>={ ...DEFAULT_PAYMENT_ALIASES };
+  for(const entry of registry||[]){
+    const code=String(entry.code||'').toUpperCase(); if(!code) continue;
+    next[token(code)]=code;
+    for(const alias of entry.aliases||[]) if(token(alias)) next[token(alias)]=code;
+  }
+  paymentAliases=next;
+}
 
 function text(value:unknown){
   if(value===null||value===undefined) return '';
@@ -266,7 +288,7 @@ export function parseQuinosInvoiceReport(matrix:unknown[][]):QuinosParseResult{
         invoiceRows.push({
           saleDate,invoiceNumber:current.invoiceNumber,cashier,saleType,itemCode,itemName,itemId:'',
           quantity:String(quantity),unitPrice:String(unitPrice),discountAmount:'0',lineTotal:String(lineTotal),
-          cash:'0',qris:'0',transfer:'0',compliment:'0',gofood:'0',grabfood:'0',
+          cash:'0',qris:'0',transfer:'0',compliment:'0',gofood:'0',grabfood:'0',card:'0',shopeefood:'0',payments:{},
         });
       }
     }
@@ -282,7 +304,7 @@ export function parseQuinosInvoiceReport(matrix:unknown[][]):QuinosParseResult{
       }
     }
 
-    const paymentTotals:Partial<Record<QuinosPaymentCode,number>>={};
+    const paymentTotals:Record<string,number>={};
     const paymentMethods:string[]=[];
     for(let r=current.row;r<end;r+=1){
       const row=matrix[r]||[];
@@ -302,10 +324,14 @@ export function parseQuinosInvoiceReport(matrix:unknown[][]):QuinosParseResult{
 
     if(invoiceRows.length){
       const first=invoiceRows[0];
-      const paymentField:Record<QuinosPaymentCode,keyof Pick<QuinosSaleRow,'cash'|'qris'|'transfer'|'compliment'|'gofood'|'grabfood'>>={
-        CASH:'cash',QRIS:'qris',TRANSFER:'transfer',COMPLIMENT:'compliment',GOFOOD:'gofood',GRABFOOD:'grabfood',
+      const legacyField:Record<string,keyof Pick<QuinosSaleRow,'cash'|'qris'|'transfer'|'compliment'|'gofood'|'grabfood'|'card'|'shopeefood'>>={
+        CASH:'cash',QRIS:'qris',TRANSFER:'transfer',COMPLIMENT:'compliment',GOFOOD:'gofood',GRABFOOD:'grabfood',CARD:'card',SHOPEEFOOD:'shopeefood',
       };
-      for(const [code,value] of Object.entries(paymentTotals) as [QuinosPaymentCode,number][]){first[paymentField[code]]=String(value||0);}
+      first.payments={};
+      for(const [code,value] of Object.entries(paymentTotals) as [QuinosPaymentCode,number][]){
+        first.payments[code]=String(value||0);
+        if(legacyField[code]) first[legacyField[code]]=String(value||0);
+      }
       rows.push(...invoiceRows);
     }else{
       warnings.push(`${current.invoiceNumber}: tidak ada baris menu yang berhasil dikenali.`);

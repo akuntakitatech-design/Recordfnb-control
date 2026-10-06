@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessLocation, canCreateTransaction, canVerifyTransaction, hasUnrestrictedLocationAccess } from './access.js';
+import { canAccessLocation, canCreateAccountingTransaction, canVerifyTransaction, hasUnrestrictedLocationAccess } from './access.js';
 import { verifyTransactionAndGenerateJournal } from './journalEngine.js';
 import { calculateDocument, type DocumentDiscount, type TransactionLineInput } from '../shared/transactionMath.js';
 
@@ -45,7 +45,7 @@ transactionRouter.get('/recent', async (req, res) => {
        LEFT JOIN financial_accounts fa ON fa.id=t.financial_account_id
        LEFT JOIN journal_headers j ON j.source_transaction_id=t.id AND j.status<>'VOID'
       WHERE ($1='' OR t.company_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (
             SELECT 1 FROM workspace_memberships wm
              WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE'
@@ -75,7 +75,7 @@ transactionRouter.post('/drafts', async (req, res) => {
   if (transactionType === 'STOCK_USAGE' && (req.body?.documentDiscountType || rawLines.some((line: any) => line.taxCodeId))) {
     return res.status(400).json({ error: 'STOCK_USAGE_DISCOUNT_TAX_NOT_ALLOWED' });
   }
-  if (!(await canCreateTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (!(await canCreateAccountingTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
 
   const company = await query<{ workspace_id: string }>('SELECT workspace_id FROM companies WHERE id=$1 AND status=\'ACTIVE\'', [companyId]);
   if (!company.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });

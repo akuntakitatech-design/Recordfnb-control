@@ -1,7 +1,7 @@
 {
   "name": "akuntakita-fnb-control-web",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.18.0",
   "type": "module",
   "description": "Akuntakita F&B Control - Frontend (React + Vite) disajikan lewat Nginx",
   "scripts": {

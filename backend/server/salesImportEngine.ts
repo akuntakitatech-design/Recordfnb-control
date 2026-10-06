@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 import type { PoolClient } from './db.js';
 import { pool } from './db.js';
+import { loadPosCodes, rowPaymentValue, type PosPaymentCode } from './posPaymentCodes.js';
 
 const ENGINE_VERSION = '0.14';
 const money = (value: string | number | null | undefined) => new Decimal(value || 0);
@@ -53,6 +54,9 @@ type Row = {
   payment_compliment: string;
   payment_gofood: string;
   payment_grabfood: string;
+  payment_card: string;
+  payment_shopeefood: string;
+  payment_extra: string | null;
   can_sell: boolean | null;
   track_stock: boolean | null;
   base_unit_id: string | null;
@@ -63,12 +67,9 @@ type Row = {
 };
 
 type PaymentMapping = { payment_code: PaymentCode; account_id: string; label: string };
-type PaymentCode = 'CASH' | 'QRIS' | 'TRANSFER' | 'COMPLIMENT' | 'GOFOOD' | 'GRABFOOD';
-const paymentCodes: PaymentCode[] = ['CASH','QRIS','TRANSFER','COMPLIMENT','GOFOOD','GRABFOOD'];
-const paymentField: Record<PaymentCode,keyof Row> = {
-  CASH:'payment_cash', QRIS:'payment_qris', TRANSFER:'payment_transfer', COMPLIMENT:'payment_compliment',
-  GOFOOD:'payment_gofood', GRABFOOD:'payment_grabfood',
-};
+/** Kode pembayaran POS berasal dari registry pos_payment_codes (bukan daftar hard-code). */
+export type PaymentCode = string;
+async function activeCodes(client: PoolClient) { return loadPosCodes(client as any); }
 
 export type SalesInvoicePreview = {
   key: string;
@@ -111,7 +112,7 @@ async function loadRows(client: PoolClient, batch: Batch) {
     `SELECT r.id,r.row_no,r.sale_date::text,r.invoice_number,r.cashier,r.sale_type,r.item_code,r.item_name,r.item_id,
             r.quantity::text,r.unit_price::text,r.discount_amount::text,r.line_total::text,
             r.payment_cash::text,r.payment_qris::text,r.payment_transfer::text,r.payment_compliment::text,
-            r.payment_gofood::text,r.payment_grabfood::text,
+            r.payment_gofood::text,r.payment_grabfood::text,r.payment_card::text,r.payment_shopeefood::text,r.payment_extra,
             i.can_sell,i.track_stock,i.base_unit_id,u.code base_unit_code,
             COALESCE(io.inventory_account_id,cm.inventory_account_id) inventory_account_id,
             COALESCE(io.cogs_account_id,cm.cogs_account_id) cogs_account_id,
@@ -129,14 +130,37 @@ async function loadRows(client: PoolClient, batch: Batch) {
   return result.rows;
 }
 
-async function loadPaymentMappings(client: PoolClient, companyId: string) {
+/**
+ * Akun debit per kode pembayaran POS.
+ * Phase 2: bila outlet punya metode pembayaran aktif (payment_methods + payment_method_locations) untuk kode tsb,
+ * akun ditentukan oleh metode: CASH/BANK_DIRECT -> COA rekening Kas/Bank tujuan; SETTLEMENT -> akun clearing
+ * (mapping Accounting). Metode terkonfigurasi tanpa akun -> dianggap belum dipetakan (PAYMENT_MAPPING_REQUIRED).
+ * Tanpa konfigurasi outlet -> fallback sales_payment_mappings (perilaku lama, data lama tidak berubah).
+ */
+async function loadPaymentMappings(client: PoolClient, companyId: string, locationId?: string) {
   const result = await client.query<PaymentMapping>(
     `SELECT payment_code,label,account_id
        FROM sales_payment_mappings
       WHERE company_id=$1`,
     [companyId],
   );
-  return new Map(result.rows.map(row => [row.payment_code,row]));
+  const map = new Map<PaymentCode,PaymentMapping>(result.rows.map(row => [row.payment_code,row]));
+  if (locationId) {
+    const methods = await client.query<{ pos_payment_code: PaymentCode; name: string; account_id: string | null }>(
+      `SELECT pml.pos_payment_code,pm.name,
+              CASE WHEN pm.destination_behavior='SETTLEMENT' THEN pm.clearing_account_id ELSE fa.coa_account_id END account_id
+         FROM payment_method_locations pml
+         JOIN payment_methods pm ON pm.id=pml.payment_method_id AND pm.status='ACTIVE' AND pm.company_id=$1
+         LEFT JOIN financial_accounts fa ON fa.id=pm.financial_account_id AND fa.status='ACTIVE'
+        WHERE pml.location_id=$2`,
+      [companyId,locationId],
+    );
+    for (const m of methods.rows) {
+      if (m.account_id) map.set(m.pos_payment_code,{ payment_code:m.pos_payment_code, account_id:m.account_id, label:m.name });
+      else map.delete(m.pos_payment_code);
+    }
+  }
+  return map;
 }
 
 async function loadSalesDiscountAccount(client: PoolClient, companyId: string) {
@@ -158,11 +182,12 @@ function groupInvoices(rows: Row[]) {
   return groups;
 }
 
-function resolveInvoicePayments(rows: Row[], invoiceNumber: string, issues: SalesIssue[]) {
+function resolveInvoicePayments(rows: Row[], invoiceNumber: string, issues: SalesIssue[], registry: PosPaymentCode[]) {
   const payments = {} as Record<PaymentCode,Decimal>;
-  for (const code of paymentCodes) {
+  for (const def of registry) {
+    const code = def.code;
     const values = rows
-      .map(row => money(row[paymentField[code]] as string))
+      .map(row => money(rowPaymentValue(row as any,def)))
       .filter(value => value.gt(0));
     const distinct = [...new Set(values.map(value => value.toFixed(4)))];
     if (distinct.length > 1) {
@@ -183,8 +208,10 @@ async function analyzeWithClient(client: PoolClient, batch: Batch, rows: Row[]):
   const issues: SalesIssue[] = [];
   const shortages: SalesShortage[] = [];
   const invoices: SalesInvoicePreview[] = [];
-  const paymentMappings = await loadPaymentMappings(client,batch.company_id);
+  const paymentMappings = await loadPaymentMappings(client,batch.company_id,batch.location_id);
   const salesDiscountAccount = await loadSalesDiscountAccount(client,batch.company_id);
+  const registry = await activeCodes(client);
+  const paymentCodes = registry.map(c => c.code);
   const groups = groupInvoices(rows);
   const virtualBalances = new Map<string,Decimal>();
   let totalSales = new Decimal(0);
@@ -200,7 +227,7 @@ async function analyzeWithClient(client: PoolClient, batch: Batch, rows: Row[]):
     const duplicate = await client.query(
       `SELECT 1 FROM transaction_headers
         WHERE company_id=$1 AND location_id=$2 AND transaction_type='SALES_INVOICE'
-          AND transaction_date=$3::date AND reference_number=$4
+          AND transaction_date=$3::date AND reference_number=$4 AND workflow_status NOT IN ('CANCELLED','VOID')
         LIMIT 1`,
       [batch.company_id,batch.location_id,first.sale_date,invoiceNumber],
     );
@@ -274,7 +301,7 @@ async function analyzeWithClient(client: PoolClient, batch: Batch, rows: Row[]):
       issues.push({ code:'SALES_DISCOUNT_ACCOUNT_REQUIRED', invoiceNumber, message:`${invoiceNumber}: akun Diskon Penjualan belum disiapkan Akuntakita.` });
     }
 
-    const resolved = resolveInvoicePayments(invoiceRows,invoiceNumber,issues);
+    const resolved = resolveInvoicePayments(invoiceRows,invoiceNumber,issues,registry);
     let paymentTotal = new Decimal(0);
     for (const code of paymentCodes) {
       if (resolved[code].gt(0) && !paymentMappings.has(code)) {
@@ -321,12 +348,16 @@ async function analyzeWithClient(client: PoolClient, batch: Batch, rows: Row[]):
 export async function previewSalesBatch(batchId: string) {
   const client = await pool.connect();
   try {
-    const batch = await loadBatch(client,batchId);
-    const rows = await loadRows(client,batch);
-    return await analyzeWithClient(client,batch,rows);
+    return await previewSalesBatchWithClient(client,batchId);
   } finally {
     client.release();
   }
+}
+
+export async function previewSalesBatchWithClient(client: PoolClient, batchId: string) {
+  const batch = await loadBatch(client,batchId);
+  const rows = await loadRows(client,batch);
+  return await analyzeWithClient(client,batch,rows);
 }
 
 async function nextSalesNumber(client: PoolClient, companyId: string, saleDate: string) {
@@ -346,13 +377,29 @@ export async function verifySalesBatch(batchId: string, userId: string, allowBel
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const result = await verifySalesBatchWithClient(client,batchId,userId,allowBelowZero);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** Inti verifikasi batch tanpa BEGIN/COMMIT — dipakai juga oleh Verifikasi Penjualan (rekonsiliasi) dalam satu transaksi DB. */
+export async function verifySalesBatchWithClient(
+  client: PoolClient, batchId: string, userId: string, allowBelowZero = false,
+  source?: { module: string; referenceId: string },
+) {
+  {
     const batch = await loadBatch(client,batchId,true);
     if (batch.status === 'FINANCE_VERIFIED') {
       const existing = await client.query<{ transaction_count: number }>(
         `SELECT COUNT(*)::int transaction_count FROM transaction_headers WHERE sales_import_batch_id=$1`,
         [batch.id],
       );
-      await client.query('COMMIT');
       return { alreadyVerified:true, transactionCount:existing.rows[0]?.transaction_count || 0 };
     }
     if (batch.status !== 'DRAFT') throw new Error(`SALES_BATCH_STATUS_MUST_BE_DRAFT_${batch.status}`);
@@ -362,8 +409,9 @@ export async function verifySalesBatch(batchId: string, userId: string, allowBel
     if (preview.issues.length) throw new Error(`SALES_BATCH_HAS_ISSUES:${preview.issues[0].message}`);
     if (preview.shortages.length && !allowBelowZero) throw new Error('INVENTORY_SHORTAGE_CONFIRMATION_REQUIRED');
 
-    const paymentMappings = await loadPaymentMappings(client,batch.company_id);
+    const paymentMappings = await loadPaymentMappings(client,batch.company_id,batch.location_id);
     const salesDiscountAccount = await loadSalesDiscountAccount(client,batch.company_id);
+    const paymentCodes = (await activeCodes(client)).map(c => c.code);
     const groups = groupInvoices(rows);
     let transactionCount = 0;
 
@@ -377,13 +425,14 @@ export async function verifySalesBatch(batchId: string, userId: string, allowBel
            workspace_id,company_id,location_id,transaction_type,transaction_number,transaction_date,reference_number,
            workflow_status,operational_status,accounting_status,payment_status,gross_amount,line_discount_amount,
            document_discount_amount,dpp_amount,tax_amount,grand_total,notes,created_by,updated_by,verified_by,verified_at,
-           sales_import_batch_id)
+           sales_import_batch_id,source_module,source_reference_id)
          VALUES($1,$2,$3,'SALES_INVOICE',$4,$5,$6,
-           'FINANCE_VERIFIED','FINANCE_VERIFIED','ACCOUNTING_REVIEW','PAID',$7,$8,0,$9,0,$9,$10,$11,$11,$11,NOW(),$12)
+           'FINANCE_VERIFIED','FINANCE_VERIFIED','ACCOUNTING_REVIEW','PAID',$7,$8,0,$9,0,$9,$10,$11,$11,$11,NOW(),$12,$13,$14)
          RETURNING id`,
         [batch.workspace_id,batch.company_id,batch.location_id,transactionNumber,first.sale_date,first.invoice_number,
          invoicePreview.gross,invoicePreview.discount,invoicePreview.net,
-         `Import ${batch.batch_number}${first.cashier ? ` · Cashier ${first.cashier}` : ''}`,userId,batch.id],
+         `Import ${batch.batch_number}${first.cashier ? ` · Cashier ${first.cashier}` : ''}`,userId,batch.id,
+         source?.module || 'POS_IMPORT',source?.referenceId || null],
       );
       const transactionId = header.rows[0].id;
       const transactionLineIds = new Map<string,string>();
@@ -529,12 +578,6 @@ export async function verifySalesBatch(batchId: string, userId: string, allowBel
       [batch.workspace_id,userId,batch.id,JSON.stringify({ batchNumber:batch.batch_number, transactionCount, allowBelowZero, totalSales:preview.totalSales })],
     );
 
-    await client.query('COMMIT');
     return { transactionCount, preview };
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
   }
 }

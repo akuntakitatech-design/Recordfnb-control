@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canAccessLocation, canCreateTransaction, canVerifyTransaction } from './access.js';
+import { canAccessCompany, canAccessLocation, canCreateFinanceTransaction, canVerifyTransaction } from './access.js';
 import { recalcInvoicePaymentStatus, verifyClientCashOut } from './cashOutEngine.js';
 import { assertPeriodAllows } from './periodGuard.js';
 
@@ -39,7 +39,7 @@ clientCashOutRouter.get('/financial-accounts', async (req,res) => {
        FROM financial_accounts fa
        LEFT JOIN locations l ON l.id=fa.location_id
       WHERE fa.company_id=$1 AND fa.status='ACTIVE' AND fa.account_kind IN ('CASH','BANK','EWALLET')
-        AND (EXISTS (SELECT 1 FROM users u WHERE u.id=$2 AND u.is_system_admin AND u.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (
             SELECT 1 FROM workspace_memberships wm
              WHERE wm.user_id=$2 AND wm.workspace_id=fa.workspace_id AND wm.status='ACTIVE'
@@ -83,7 +83,7 @@ clientCashOutRouter.get('/cash-outs', async (req,res) => {
        LEFT JOIN financial_accounts fa ON fa.id=t.financial_account_id
       WHERE t.transaction_type='CASH_OUT'
         AND ($1='' OR t.company_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users u WHERE u.id=$2 AND u.is_system_admin AND u.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (
             SELECT 1 FROM workspace_memberships wm
              WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE'
@@ -113,7 +113,7 @@ clientCashOutRouter.post('/cash-outs', async (req,res) => {
     return res.status(400).json({ error:'CASH_OUT_HEADER_REQUIRED' });
   }
   if (!['DEBT_PAYMENT','OPERATIONAL_EXPENSE'].includes(cashOutType)) return res.status(400).json({ error:'INVALID_CASH_OUT_TYPE' });
-  if (!(await canCreateTransaction(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN' });
+  if (!(await canCreateFinanceTransaction(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN' });
 
   const company=await query<{ workspace_id:string }>(`SELECT workspace_id FROM companies WHERE id=$1 AND status='ACTIVE'`,[companyId]);
   if (!company.rowCount) return res.status(404).json({ error:'COMPANY_NOT_FOUND' });

@@ -6,9 +6,9 @@ import { requireAuth } from './auth.js';
 import {
   canAccessCompany,
   canAccessLocation,
-  canCreateTransaction,
+  canCreateFinanceTransaction,
+  canManageBom,
   canVerifyTransaction,
-  canWriteOperationalWorkspaceMaster,
 } from './access.js';
 import { previewProduction, verifyProduction } from './productionEngine.js';
 import { productionRequirement, productionYield } from '../shared/bomMath.js';
@@ -28,9 +28,7 @@ const num = (value: unknown) => {
 
 async function canOverride(userId: string, companyId: string) {
   const result = await query(
-    `SELECT 1 FROM users u WHERE u.id=$1 AND u.status='ACTIVE' AND u.is_system_admin
-     UNION ALL
-     SELECT 1 FROM companies c
+    `SELECT 1 FROM companies c
        JOIN workspace_memberships wm ON wm.workspace_id=c.workspace_id
        JOIN roles r ON r.id=wm.role_id
       WHERE c.id=$2 AND wm.user_id=$1 AND wm.status='ACTIVE'
@@ -166,8 +164,9 @@ clientBomProductionRouter.post('/boms', async (req, res) => {
     [companyId],
   );
   if (!company.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
-  if (!(await canWriteOperationalWorkspaceMaster(req.sessionUser!.id, company.rows[0].workspace_id))) {
-    return res.status(403).json({ error: 'FORBIDDEN' });
+  // Role V2: BOM/Resep dimiliki Accounting (create, edit/versioning). Finance & Outlet hanya melihat.
+  if (!(await canManageBom(req.sessionUser!.id, companyId))) {
+    return res.status(403).json({ error: 'BOM_ACCOUNTING_ONLY' });
   }
 
   const client = await pool.connect();
@@ -250,9 +249,9 @@ clientBomProductionRouter.post('/boms', async (req, res) => {
 
 clientBomProductionRouter.delete('/boms/:bomId', async (req, res) => {
   const bomId = text(req.params.bomId);
-  const bom = await query<{ workspace_id: string }>(`SELECT workspace_id FROM bom_headers WHERE id=$1`, [bomId]);
+  const bom = await query<{ workspace_id: string; company_id: string }>(`SELECT workspace_id,company_id FROM bom_headers WHERE id=$1`, [bomId]);
   if (!bom.rowCount) return res.status(404).json({ error: 'BOM_NOT_FOUND' });
-  if (!(await canWriteOperationalWorkspaceMaster(req.sessionUser!.id, bom.rows[0].workspace_id))) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (!(await canManageBom(req.sessionUser!.id, bom.rows[0].company_id))) return res.status(403).json({ error: 'BOM_ACCOUNTING_ONLY' });
 
   await query(`UPDATE bom_headers SET status='INACTIVE',updated_by=$1,updated_at=NOW() WHERE id=$2`, [req.sessionUser!.id, bomId]);
   await query(
@@ -279,7 +278,7 @@ clientBomProductionRouter.get('/productions', async (req, res) => {
        JOIN units u ON u.id=i.base_unit_id
        LEFT JOIN locations l ON l.id=t.location_id
       WHERE t.transaction_type='PRODUCTION' AND t.company_id=$1
-        AND (EXISTS(SELECT 1 FROM users us WHERE us.id=$2 AND us.is_system_admin AND us.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS(SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE'
             AND (wm.company_id IS NULL OR wm.company_id=t.company_id) AND (wm.location_id IS NULL OR wm.location_id=t.location_id)))
       ORDER BY t.transaction_date DESC,t.created_at DESC LIMIT 100`,
@@ -300,7 +299,7 @@ clientBomProductionRouter.post('/productions', async (req, res) => {
   if (!companyId || !locationId || !bomId || !/^\d{4}-\d{2}-\d{2}$/.test(transactionDate) || !Number.isFinite(batchCount) || batchCount <= 0 || !Number.isFinite(actualOutput) || actualOutput <= 0) {
     return res.status(400).json({ error: 'PRODUCTION_REQUIRED_FIELDS' });
   }
-  if (!(await canCreateTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (!(await canCreateFinanceTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
   if (!(await canAccessLocation(req.sessionUser!.id, locationId))) return res.status(403).json({ error: 'LOCATION_FORBIDDEN' });
 
   const company = await query<{ workspace_id: string }>(

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isQuinosInvoiceReport, parseQuinosInvoiceReport } from '../shared/quinosInvoiceParser.js';
+import { configureQuinosPaymentAliases, isQuinosInvoiceReport, parseQuinosInvoiceReport } from '../shared/quinosInvoiceParser.js';
 
 test('detects Quinos invoice detail report',()=>{
   const matrix=[
@@ -90,4 +90,71 @@ test('ignores Quinos order memo code OM000',()=>{
   const result=parseQuinosInvoiceReport(matrix);
   assert.equal(result.rows.length,1);
   assert.equal(result.rows[0].itemCode,'MN003');
+});
+
+test('Phase 2: Debit/EDC (Kartu), ShopeeFood dan kode registry baru terbaca tanpa ubah parser',()=>{
+  const row=(values:Record<number,unknown>)=>{
+    const r:Array<unknown>=Array(14).fill('');
+    for(const [key,value] of Object.entries(values)) r[Number(key)]=value;
+    return r;
+  };
+  const invoice=(no:string,pay:string,amount:string)=>[
+    row({1:'Invoice #',4:no,11:'Cashier',13:'SALSA'}),
+    row({1:'Type',4:'DINE IN',6:'Pax',7:'1',11:'Opened',13:'9/1/26 5:08 PM'}),
+    row({1:'TBL',11:'Closed',13:'9/1/26 5:08 PM'}),
+    row({1:'1',4:'CHICKEN STEAK',10:'MN024',13:amount}),
+    row({1:'1',4:pay,13:amount}),
+    row({11:'Total',13:amount}),
+  ];
+  const matrix=[row({1:'MEAT NIGHT'}),row({1:'INVOICE DETAIL REPORT'}),...invoice('025201','DEBIT','50,000.00'),...invoice('025202','EDC','60,000.00'),
+    ...invoice('025203','SHOPEEFOOD','70,000.00'),...invoice('025204','OVO','80,000.00')];
+  configureQuinosPaymentAliases([{code:'OVO',aliases:['OVO','OVOPAY']}]);
+  const result=parseQuinosInvoiceReport(matrix);
+  const byInv=Object.fromEntries(result.rows.map(r=>[r.invoiceNumber,r]));
+  assert.equal(byInv['025201'].card,'50000');
+  assert.equal(byInv['025201'].payments?.CARD,'50000');
+  assert.equal(byInv['025202'].payments?.CARD,'60000');
+  assert.equal(byInv['025203'].shopeefood,'70000');
+  assert.equal(byInv['025204'].payments?.OVO,'80000');
+  configureQuinosPaymentAliases([]);
+});
+
+test('Phase 2: semua metode default (Cash/Tunai, QRIS, Transfer, GoFood, GrabFood, Compliment, Kartu) + split payment',()=>{
+  const row=(values:Record<number,unknown>)=>{
+    const r:Array<unknown>=Array(14).fill('');
+    for(const [key,value] of Object.entries(values)) r[Number(key)]=value;
+    return r;
+  };
+  const invoice=(no:string,pays:Array<[string,string]>,amount:string)=>[
+    row({1:'Invoice #',4:no,11:'Cashier',13:'SALSA'}),
+    row({1:'Type',4:'DINE IN',6:'Pax',7:'1',11:'Opened',13:'9/1/26 5:08 PM'}),
+    row({1:'TBL',11:'Closed',13:'9/1/26 5:08 PM'}),
+    row({1:'1',4:'CHICKEN STEAK',10:'MN024',13:amount}),
+    ...pays.map(([p,v])=>row({1:'1',4:p,13:v})),
+    row({11:'Total',13:amount}),
+  ];
+  const matrix=[row({1:'MEAT NIGHT'}),row({1:'INVOICE DETAIL REPORT'}),
+    ...invoice('030001',[['CASH','10,000.00']],'10,000.00'),
+    ...invoice('030002',[['TUNAI','11,000.00']],'11,000.00'),
+    ...invoice('030003',[['QRIS','12,000.00']],'12,000.00'),
+    ...invoice('030004',[['TRANSFER','13,000.00']],'13,000.00'),
+    ...invoice('030005',[['GOFOOD','14,000.00']],'14,000.00'),
+    ...invoice('030006',[['GRABFOOD','15,000.00']],'15,000.00'),
+    ...invoice('030007',[['COMPLIMENT','16,000.00']],'16,000.00'),
+    ...invoice('030008',[['KARTU','17,000.00']],'17,000.00'),
+    ...invoice('030009',[['CASH','5,000.00'],['QRIS','13,000.00']],'18,000.00'),
+  ];
+  configureQuinosPaymentAliases([]);
+  const result=parseQuinosInvoiceReport(matrix);
+  const p=(inv:string)=>result.rows.find(r=>r.invoiceNumber===inv)?.payments||{};
+  assert.equal(p('030001').CASH,'10000');
+  assert.equal(p('030002').CASH,'11000');
+  assert.equal(p('030003').QRIS,'12000');
+  assert.equal(p('030004').TRANSFER,'13000');
+  assert.equal(p('030005').GOFOOD,'14000');
+  assert.equal(p('030006').GRABFOOD,'15000');
+  assert.equal(p('030007').COMPLIMENT,'16000');
+  assert.equal(p('030008').CARD,'17000');
+  assert.deepEqual(p('030009'),{CASH:'5000',QRIS:'13000'});
+  assert.equal(result.rows.find(r=>r.invoiceNumber==='030009')?.cash,'5000');
 });

@@ -46,6 +46,8 @@ const importantLabels: Record<string,string> = {
   CURRENT_YEAR_EARNINGS: 'Laba Rugi Tahun Berjalan',
   OPENING_BALANCE_EQUITY: 'Ekuitas Saldo Awal',
   CASH_BANK_VARIANCE: 'Selisih Kas dan Bank',
+  CASH_DRAWER_VARIANCE: 'Cash Drawer Variance / Selisih Kas',
+  SETTLEMENT_VARIANCE: 'Settlement Variance / Selisih Settlement',
   ROUNDING: 'Selisih Pembulatan',
 };
 

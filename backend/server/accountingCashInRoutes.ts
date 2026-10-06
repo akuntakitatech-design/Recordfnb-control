@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canReviewJournal } from './access.js';
+import { canAccessAccountingCompany, canReviewJournal } from './access.js';
 import { directCashIn } from './cashInEngine.js';
 
 export const accountingCashInRouter = Router();
@@ -12,7 +12,7 @@ function text(value:unknown) { return String(value ?? '').trim(); }
 accountingCashInRouter.get('/pending', async (req,res) => {
   const companyId=text(req.query.companyId);
   if (!companyId) return res.status(400).json({ error:'COMPANY_REQUIRED' });
-  if (!(await canAccessCompany(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN_COMPANY' });
+  if (!(await canAccessAccountingCompany(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN_COMPANY' });
   if (!(await canReviewJournal(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'ACCOUNTING_REVIEW_ROLE_REQUIRED' });
 
   const result=await query(

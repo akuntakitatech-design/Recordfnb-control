@@ -10,7 +10,7 @@ import * as XLSX from 'xlsx';
 import Decimal from 'decimal.js';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canAccessLocation, canCreateTransaction, canVerifyTransaction } from './access.js';
+import { canAccessCompany, canAccessLocation, canCreateFinanceTransaction, canVerifyTransaction } from './access.js';
 import { verifyTransactionAndGenerateJournal } from './journalEngine.js';
 import { recalcInvoicePaymentStatus } from './cashOutEngine.js';
 import { assertPeriodAllows } from './periodGuard.js';
@@ -70,6 +70,21 @@ const MUTATIONS = `
          t.location_id,t.workflow_status,t.accounting_status,t.reference_number,NULL
     FROM transaction_headers t
    WHERE t.company_id=$1 AND t.transaction_type='CASH_TRANSFER' AND t.transfer_to_financial_account_id IS NOT NULL AND t.workflow_status NOT IN ${EXCLUDED}
+  UNION ALL
+  -- Phase 2: penjualan Cash / transfer langsung yang sudah Finance Verified (nilai aktual). source = SALES_VERIFICATION
+  SELECT srl.id,sr.reconciliation_number,srl.business_date,sr.verified_at,'SALES_VERIFICATION',CONCAT('Penjualan ',srl.method_name),0,
+         srl.financial_account_id,srl.actual_amount,0,CONCAT('POS ',l.name),
+         CONCAT('Verifikasi penjualan ',l.name,' ',DATE_FORMAT(srl.business_date,'%Y-%m-%d')),NULL,
+         srl.location_id,'FINANCE_VERIFIED','ACCOUNTING_REVIEW',sr.reconciliation_number,NULL
+    FROM sales_reconciliation_lines srl JOIN sales_reconciliations sr ON sr.id=srl.reconciliation_id JOIN locations l ON l.id=srl.location_id
+   WHERE srl.company_id=$1 AND srl.line_status='ACTIVE' AND srl.destination_behavior IN ('CASH_DIRECT','BANK_DIRECT') AND srl.financial_account_id IS NOT NULL AND srl.actual_amount>0
+  UNION ALL
+  -- Phase 2: penerimaan settlement QRIS/EDC/OJOL (nilai bersih masuk bank). source = QRIS_SETTLEMENT / OJOL_SETTLEMENT / ...
+  SELECT t.id,t.transaction_number,t.transaction_date,t.created_at,t.transaction_type,COALESCE(t.source_name,'Settlement'),0,
+         t.financial_account_id,t.grand_total,0,t.source_module,t.notes,NULL,
+         t.location_id,t.workflow_status,t.accounting_status,t.reference_number,NULL
+    FROM transaction_headers t
+   WHERE t.company_id=$1 AND t.transaction_type='SALES_SETTLEMENT' AND t.financial_account_id IS NOT NULL AND t.workflow_status NOT IN ${EXCLUDED}
 `;
 
 async function requireCompany(req: any, res: any, companyId: string) {
@@ -338,7 +353,7 @@ cashBankRouter.post('/transfers', async (req, res) => {
   if (!companyId || !fromAccountId || !toAccountId || !isDate(transactionDate)) return res.status(400).json({ error: 'TRANSFER_HEADER_REQUIRED' });
   if (fromAccountId === toAccountId) return res.status(400).json({ error: 'TRANSFER_ACCOUNTS_MUST_DIFFER' });
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'POSITIVE_TRANSFER_AMOUNT_REQUIRED' });
-  if (!(await canCreateTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (!(await canCreateFinanceTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
 
   const company = await query<{ workspace_id: string }>(`SELECT workspace_id FROM companies WHERE id=$1 AND status='ACTIVE'`, [companyId]);
   if (!company.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
@@ -471,7 +486,7 @@ cashBankRouter.post('/transactions/:transactionId/cancel', async (req, res) => {
     if (!tx.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'TRANSACTION_NOT_FOUND' }); }
     const t = tx.rows[0];
     if (!['CASH_OUT', 'CASH_IN', 'CASH_TRANSFER'].includes(t.transaction_type)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'ONLY_CASH_TRANSACTIONS_CAN_BE_CANCELLED' }); }
-    if (!(await canCreateTransaction(req.sessionUser!.id, t.company_id))) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'FORBIDDEN' }); }
+    if (!(await canCreateFinanceTransaction(req.sessionUser!.id, t.company_id))) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'FORBIDDEN' }); }
     if (t.location_id && !(await canAccessLocation(req.sessionUser!.id, t.location_id))) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'LOCATION_FORBIDDEN' }); }
     if (t.workflow_status !== 'DRAFT') { await client.query('ROLLBACK'); return res.status(409).json({ error: 'ONLY_DRAFT_CAN_BE_CANCELLED' }); }
     try { await assertPeriodAllows(client, t.company_id, t.transaction_date, 'FINANCE'); }

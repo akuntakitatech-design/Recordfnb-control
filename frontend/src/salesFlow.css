@@ -1,0 +1,57 @@
+/* Phase 2 — Cash Drawer, Rekonsiliasi, Settlement, Metode Pembayaran. Mengikuti gaya existing (section-card, cb-*, status pill). */
+.sf-page .section-card{padding-bottom:20px}
+.sf-page h4{margin:22px 20px 8px;font-size:14px;color:#111827}
+.sf-banner{margin:14px 20px 0;display:flex;align-items:center;gap:8px}
+.sf-banner-close{margin-left:auto;background:none;border:0;font-size:18px;cursor:pointer;color:inherit}
+.sf-filter{padding:0 20px;margin-top:14px;align-items:end}
+.sf-stat{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa}
+.sf-stat span{font-size:11px;color:#6b7280}.sf-stat strong{font-size:18px}
+.sf-chips{display:flex;flex-wrap:wrap;gap:8px;padding:12px 20px 0}
+.sf-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid #e5e7eb;background:#fff;font-size:12px;cursor:pointer;transition:background-color .15s,border-color .15s}
+.sf-chip:hover{border-color:#9ca3af}.sf-chip.active{background:#111827;color:#fff;border-color:#111827}
+.sf-chip:focus-visible,.sf-upload:focus-within,.sf-method-card input:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.sf-locked,.sf-warn{margin:14px 20px 0;display:flex;align-items:center;gap:8px}
+.sf-warn{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
+.sf-method-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;padding:16px 20px 0}
+.sf-method-card{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+.sf-method-card.invalid{border-color:#fca5a5;background:#fef2f2}
+.sf-method-card label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#374151}
+.sf-method-card .number-input{font-size:18px;min-height:44px}
+.sf-method-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sf-upload{position:relative;display:inline-flex!important;flex-direction:row!important;align-items:center;gap:6px;padding:10px 12px;min-height:44px;border:1px dashed #9ca3af;border-radius:10px;cursor:pointer;font-size:12px;color:#374151;background:#f9fafb}
+.sf-upload:hover{border-color:#111827}.sf-upload.disabled{opacity:.5;cursor:not-allowed}
+.sf-upload input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.sf-upload-row{display:flex;flex-wrap:wrap;gap:8px}
+.sf-upload-row .sf-upload{flex:1 1 120px;justify-content:center}
+.sf-evidence-link{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#1d4ed8}
+.sf-error-text{color:#b91c1c;font-size:11px}
+.sf-notes{display:flex;flex-direction:column;gap:4px;margin:16px 20px 0;font-size:12px}
+.sf-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 20px 0;flex-wrap:wrap}
+.sf-actions .journal-meta{margin-right:auto}
+.sf-history{margin:14px 20px 0}
+.sf-tag,.sf-status{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid transparent;white-space:nowrap}
+.sf-tag.good,.sf-status.good{background:#f0fdf4;color:#166534;border-color:#dcfce7}
+.sf-tag.warn,.sf-status.warn{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
+.sf-tag.bad,.sf-status.bad{background:#fef2f2;color:#991b1b;border-color:#fecaca}
+.sf-tag.info,.sf-status.info{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
+.sf-tag.muted,.sf-status.muted{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.sf-table td,.sf-table th{vertical-align:top}
+.sf-row-bad td{background:#fff7f7}.sf-row-picked td{background:#eff6ff}.sf-row-cancelled td{color:#9ca3af;text-decoration:line-through}
+.sf-row-cancelled td:nth-last-child(-n+2){text-decoration:none}
+.sf-blockers{margin:12px 20px 0;display:flex;gap:8px}.sf-blockers ul{margin:4px 0 0;padding-left:18px}
+.sf-two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 0}
+.sf-two-col>div{min-width:0}.sf-two-col .data-table-wrap,.sf-two-col .helper-box,.sf-two-col .form-grid{margin-left:20px;margin-right:20px}
+.sf-scroll{max-height:320px;overflow:auto}
+.sf-inline{display:inline-flex;align-items:center;gap:4px;margin-right:10px}
+.sf-back{margin-bottom:8px}
+.sf-danger{color:#b91c1c!important;border-color:#fecaca!important}
+.sf-danger-fill{background:#b91c1c!important;border-color:#b91c1c!important}
+.sf-settle-form{margin:16px 20px 0;padding:14px;border:1px solid #bfdbfe;border-radius:12px;background:#f8fbff}
+.sf-settle-form h4{margin:0 0 10px}.sf-settle-form>label{display:flex;flex-direction:column;gap:4px;font-size:12px;margin-top:10px}
+.sf-alloc{max-width:130px}
+.sf-variance-row{display:flex;flex-direction:column;gap:4px;margin:10px 20px 0;font-size:12px}
+.sf-outlet-picks{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px;font-size:12px}
+#root .sf-page .modal-card label{font-size:12px}
+@media(max-width:900px){.sf-two-col{grid-template-columns:1fr}.sf-method-grid{grid-template-columns:1fr}.sf-filter{grid-template-columns:1fr!important}}
+.sf-page .cb-toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;padding:14px 20px}.sf-page>.section-card>.data-table-wrap,.sf-page>.section-card>.cb-summary-strip,.sf-page>.section-card>.tabs{margin-top:12px}.sf-page .sf-back{display:inline-flex;margin-right:10px}
+.sf-settle-form>label.inline-check,.sf-page label.inline-check.standalone{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;text-align:left}

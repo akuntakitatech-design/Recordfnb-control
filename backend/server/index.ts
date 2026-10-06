@@ -31,7 +31,9 @@ import { accountingCashInRouter } from './accountingCashInRoutes.js';
 import { cashBankRouter } from './cashBankRoutes.js';
 import { accountingControlRouter } from './accountingControlRoutes.js';
 import { accountingPeriodRouter } from './accountingPeriodRoutes.js';
-import { canWriteCompanyMaster, canWriteWorkspaceMaster, isSystemAdmin } from './access.js';
+import { salesFlowRouter } from './salesFlowRoutes.js';
+import { AREA, canManageOrganizationCompany, canManageOrganizationWorkspace, isSystemAdmin, requireArea } from './access.js';
+import type { Request } from 'express';
 
 const app = express();
 // Di Coolify backend berada di belakang Nginx (frontend) + Traefik: percayai header X-Forwarded-*.
@@ -40,6 +42,8 @@ const port = Number(process.env.PORT || 3000);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 
+// Phase 2: bukti foto Cash Drawer maks 7 MB (base64 ≈ 9.4 MB) — limit khusus endpoint bukti; ukuran file asli divalidasi di route.
+app.use('/api/sales-flow/evidence', express.json({ limit: '10mb' }));
 app.use(express.json({ limit: '8mb' }));
 app.use(cookieParser());
 
@@ -189,7 +193,7 @@ app.post('/api/master/companies', requireAuth, async (req, res) => {
   const code = String(req.body?.code || '').trim().toUpperCase();
   const name = String(req.body?.name || '').trim();
   if (!workspaceId || !code || !name) return res.status(400).json({ error: 'WORKSPACE_CODE_NAME_REQUIRED' });
-  if (!(await canWriteWorkspaceMaster(req.sessionUser!.id, workspaceId))) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (!(await canManageOrganizationWorkspace(req.sessionUser!.id, workspaceId))) return res.status(403).json({ error: 'FORBIDDEN' });
   const result = await query(`INSERT INTO companies(workspace_id,code,name) VALUES($1,$2,$3) RETURNING id,workspace_id,code,name,status`, [workspaceId, code, name]);
   res.status(201).json(result.rows[0]);
 });
@@ -211,7 +215,7 @@ app.post('/api/master/locations', requireAuth, async (req, res) => {
   const name = String(req.body?.name || '').trim();
   const locationType = String(req.body?.locationType || 'OUTLET');
   if (!companyId || !code || !name) return res.status(400).json({ error: 'COMPANY_CODE_NAME_REQUIRED' });
-  if (!(await canWriteCompanyMaster(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (!(await canManageOrganizationCompany(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
   const ws = await query<{ workspace_id: string }>('SELECT workspace_id FROM companies WHERE id=$1', [companyId]);
   if (!ws.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
   const result = await query(
@@ -221,6 +225,30 @@ app.post('/api/master/locations', requireAuth, async (req, res) => {
   );
   res.status(201).json(result.rows[0]);
 });
+
+// ---- Role V2: guard area per router (lapis pertama; scope company/location tetap dicek di route) ----
+// Outlet: hanya penjualan/POS, pemakaian, transfer, stock opname (+ lampiran transaksi area tersebut).
+const outletOperationalPath = /^\/(sales-context|sales-batches|sales-import-profiles|sales-import-profile-items|sales-import-profiles\/detect|item-usage-balances|item-usages|stock-transfer-items|stock-transfers|stock-opname-items|stock-opnames)(\/|$)/;
+const transactionAttachmentPath = /^\/[^/]+\/attachments(\/|$)/;
+const clientTransactionArea = (req: Request) =>
+  outletOperationalPath.test(req.path) || transactionAttachmentPath.test(req.path) ? AREA.OPERATIONAL : AREA.FINANCE;
+// Transaction engine generik = Accounting; verifikasi invoice pembelian tetap boleh Finance.
+const transactionEngineArea = (req: Request) =>
+  req.method === 'POST' && /^\/[^/]+\/verify$/.test(req.path) ? AREA.FINANCE : AREA.ACCOUNTING;
+
+app.use('/api/master', ...requireArea(AREA.MASTER_READ));
+app.use('/api/client-master', ...requireArea(AREA.FINANCE));
+app.use('/api/client-transactions', ...requireArea(clientTransactionArea));
+app.use('/api/transactions', ...requireArea(transactionEngineArea));
+app.use('/api/cash-bank', ...requireArea(AREA.FINANCE));
+app.use('/api/master/coa-standard', ...requireArea(AREA.ACCOUNTING));
+app.use('/api/journals', ...requireArea(AREA.ACCOUNTING));
+app.use('/api/accounting-cash-outs', ...requireArea(AREA.ACCOUNTING));
+app.use('/api/accounting-cash-ins', ...requireArea(AREA.ACCOUNTING));
+app.use('/api/accounting-control', ...requireArea(AREA.ACCOUNTING));
+// Phase 2: Cash Drawer & bukti = area operasional (Outlet); master metode, rekonsiliasi, settlement = area Finance.
+app.use('/api/sales-flow', ...requireArea(req => (/^\/(cash-drawers|evidence)\b/.test(req.path) ? AREA.OPERATIONAL : AREA.FINANCE)));
+app.use('/api/accounting-periods', ...requireArea(AREA.ACCOUNTING));
 
 app.use('/api/master', masterRouter);
 app.use('/api/master', financeMasterRouter);
@@ -242,6 +270,7 @@ app.use('/api/accounting-cash-outs', accountingCashOutRouter);
 app.use('/api/accounting-cash-ins', accountingCashInRouter);
 app.use('/api/cash-bank', cashBankRouter);
 app.use('/api/accounting-control', accountingControlRouter);
+app.use('/api/sales-flow', salesFlowRouter);
 app.use('/api/accounting-periods', accountingPeriodRouter);
 
 // Frontend disajikan oleh container Nginx terpisah (lihat /frontend). Mode single-container lama
@@ -253,7 +282,10 @@ if (process.env.SERVE_STATIC === '1') {
 
 // Safety net: error async dari handler (mis. duplikat unique key) tidak lagi mematikan proses,
 // melainkan dijawab sebagai JSON error.
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: req.path.startsWith('/api/sales-flow/evidence') ? 'EVIDENCE_MAX_7MB' : 'PAYLOAD_TOO_LARGE' });
+  }
   const duplicate = err?.code === '23505';
   const fk = err?.code === '23503';
   const status = duplicate ? 409 : fk ? 400 : 500;

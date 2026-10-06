@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canAccessLocation, canCreateTransaction, canVerifyTransaction } from './access.js';
+import { canAccessCompany, canAccessLocation, canCreateFinanceTransaction, canVerifyTransaction } from './access.js';
 import { verifyClientCashIn } from './cashInEngine.js';
 import { assertPeriodAllows } from './periodGuard.js';
 
@@ -38,7 +38,7 @@ clientCashInRouter.get('/cash-ins', async (req,res) => {
        LEFT JOIN financial_accounts fa ON fa.id=t.financial_account_id
       WHERE t.transaction_type='CASH_IN'
         AND ($1='' OR t.company_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users u WHERE u.id=$2 AND u.is_system_admin AND u.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (
             SELECT 1 FROM workspace_memberships wm
              WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE'
@@ -67,7 +67,7 @@ clientCashInRouter.post('/cash-ins', async (req,res) => {
   }
   if (!['BUSINESS_RECEIPT','OTHER_RECEIPT'].includes(cashInType)) return res.status(400).json({ error:'INVALID_CASH_IN_TYPE' });
   if (!rawLines.length) return res.status(400).json({ error:'CASH_IN_LINES_REQUIRED' });
-  if (!(await canCreateTransaction(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN' });
+  if (!(await canCreateFinanceTransaction(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN' });
 
   const company=await query<{ workspace_id:string }>(`SELECT workspace_id FROM companies WHERE id=$1 AND status='ACTIVE'`,[companyId]);
   if (!company.rowCount) return res.status(404).json({ error:'COMPANY_NOT_FOUND' });

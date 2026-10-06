@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canWriteCompanyMaster } from './access.js';
+import { canAccessAccountingCompany, canWriteCompanyMaster } from './access.js';
+import { VARIANCE_ROLES, validateVarianceAccount, type VarianceRole } from './salesFlowEngine.js';
 
 export const coaTemplateRouter = Router();
 coaTemplateRouter.use(requireAuth);
@@ -10,7 +11,7 @@ function text(value: unknown) { return String(value ?? '').trim(); }
 function nullable(value: unknown) { const v = text(value); return v || null; }
 
 async function requireCompanyRead(userId: string, companyId: string) {
-  return Boolean(companyId && await canAccessCompany(userId, companyId));
+  return Boolean(companyId && await canAccessAccountingCompany(userId, companyId));
 }
 
 async function requireCompanyWrite(userId: string, companyId: string) {
@@ -230,10 +231,20 @@ coaTemplateRouter.put('/company/:companyId/important/:roleCode', async (req, res
   if (!company.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
   const account = await query('SELECT id FROM chart_of_accounts WHERE id=$1 AND company_id=$2', [accountId, companyId]);
   if (!account.rowCount) return res.status(400).json({ error: 'INVALID_ACCOUNT' });
+  // Akun selisih Phase 2 lewat jalur generik tetap tunduk pada aturan yang sama (terpisah satu sama lain & bukan akun MDR).
+  if (roleCode in VARIANCE_ROLES) {
+    const invalid = await validateVarianceAccount({ query } as any, companyId, roleCode as VarianceRole, accountId);
+    if (invalid) return res.status(400).json({ error: invalid });
+  }
+  const before = await query<{ account_id: string }>('SELECT account_id FROM important_accounts WHERE company_id=$1 AND role_code=$2', [companyId, roleCode]);
   await query(
     `INSERT INTO important_accounts(workspace_id,company_id,role_code,account_id) VALUES($1,$2,$3,$4)
      ON CONFLICT(company_id,role_code) DO UPDATE SET account_id=EXCLUDED.account_id`,
     [company.rows[0].workspace_id, companyId, roleCode, accountId],
+  );
+  await query(
+    `INSERT INTO audit_logs(workspace_id,user_id,entity_type,entity_id,action,before_data,after_data) VALUES($1,$2,'IMPORTANT_ACCOUNT',$3,'SET_IMPORTANT_ACCOUNT',$4::jsonb,$5::jsonb)`,
+    [company.rows[0].workspace_id, req.sessionUser!.id, companyId, JSON.stringify(before.rows[0] || {}), JSON.stringify({ role: roleCode, accountId })],
   );
   res.json({ ok: true });
 });

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canWriteCompanyMaster, canWriteWorkspaceMaster } from './access.js';
+import { AREA, canWriteCompanyMaster, canWriteWorkspaceMaster, requireArea } from './access.js';
 
 export const masterRouter = Router();
 masterRouter.use(requireAuth);
@@ -16,7 +16,7 @@ masterRouter.get('/units', async (req, res) => {
     `SELECT u.id,u.workspace_id,u.code,u.name,u.decimal_precision,u.status,w.name workspace_name
        FROM units u JOIN workspaces w ON w.id=u.workspace_id
       WHERE ($1='' OR u.workspace_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=u.workspace_id AND wm.status='ACTIVE'))
       ORDER BY w.name,u.name`, [workspaceId, req.sessionUser!.id],
   );
@@ -48,7 +48,7 @@ masterRouter.get('/item-categories', async (req, res) => {
        JOIN workspaces w ON w.id=c.workspace_id
        LEFT JOIN item_categories p ON p.id=c.parent_id
       WHERE ($1='' OR c.workspace_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=c.workspace_id AND wm.status='ACTIVE'))
       ORDER BY w.name,c.category_type,c.name`, [workspaceId, req.sessionUser!.id],
   );
@@ -83,7 +83,7 @@ masterRouter.get('/items', async (req, res) => {
        JOIN units u ON u.id=i.base_unit_id
        JOIN workspaces w ON w.id=i.workspace_id
       WHERE ($1='' OR i.workspace_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=i.workspace_id AND wm.status='ACTIVE'))
       ORDER BY w.name,c.name,i.name`, [workspaceId, req.sessionUser!.id],
   );
@@ -121,7 +121,7 @@ masterRouter.get('/unit-conversions', async (req, res) => {
        JOIN units fu ON fu.id=uc.from_unit_id
        JOIN units tu ON tu.id=uc.to_unit_id
       WHERE ($1='' OR uc.workspace_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=uc.workspace_id AND wm.status='ACTIVE'))
       ORDER BY w.name,COALESCE(i.name,''),fu.code,tu.code`, [workspaceId, req.sessionUser!.id],
   );
@@ -153,7 +153,7 @@ masterRouter.get('/cost-centers', async (req, res) => {
        FROM cost_centers cc
        JOIN companies c ON c.id=cc.company_id
       WHERE ($1='' OR cc.company_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=c.workspace_id AND wm.status='ACTIVE' AND (wm.company_id IS NULL OR wm.company_id=c.id)))
       ORDER BY cc.name`, [companyId, req.sessionUser!.id],
   );
@@ -167,7 +167,7 @@ masterRouter.get('/tax-codes', async (req, res) => {
        FROM tax_codes tc
       WHERE ($1='' OR tc.workspace_id=$1::uuid)
         AND (tc.effective_to IS NULL OR tc.effective_to >= CURRENT_DATE)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=tc.workspace_id AND wm.status='ACTIVE'))
       ORDER BY tc.code,tc.effective_from DESC`, [workspaceId, req.sessionUser!.id],
   );
@@ -180,21 +180,22 @@ masterRouter.get('/partners', async (req, res) => {
     `SELECT bp.id,bp.workspace_id,bp.code,bp.name,bp.partner_type,bp.payment_term_days,bp.status
        FROM business_partners bp
       WHERE ($1='' OR bp.workspace_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=bp.workspace_id AND wm.status='ACTIVE'))
       ORDER BY bp.name`, [workspaceId, req.sessionUser!.id],
   );
   res.json(result.rows);
 });
 
-masterRouter.get('/accounts', async (req, res) => {
+// COA perusahaan = area Accounting (Role V2): Finance/Owner/Outlet ditolak 403.
+masterRouter.get('/accounts', ...requireArea(AREA.ACCOUNTING), async (req, res) => {
   const companyId = text(req.query.companyId);
   const result = await query(
     `SELECT coa.id,coa.company_id,coa.code,coa.name,coa.account_type,coa.normal_balance,coa.status
        FROM chart_of_accounts coa
        JOIN companies c ON c.id=coa.company_id
       WHERE ($1='' OR coa.company_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users x WHERE x.id=$2 AND x.is_system_admin AND x.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=c.workspace_id AND wm.status='ACTIVE' AND (wm.company_id IS NULL OR wm.company_id=c.id)))
       ORDER BY coa.code`, [companyId, req.sessionUser!.id],
   );

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canPostJournal, canReviewJournal } from './access.js';
+import { canAccessAccountingCompany, canPostJournal, canReviewJournal } from './access.js';
 
 export const accountingPeriodRouter = Router();
 accountingPeriodRouter.use(requireAuth);
@@ -12,7 +12,7 @@ const STATUSES = new Set(['OPEN', 'SOFT_CLOSED', 'HARD_CLOSED']);
 accountingPeriodRouter.get('/', async (req, res) => {
   const companyId = text(req.query.companyId);
   if (!companyId) return res.status(400).json({ error: 'COMPANY_REQUIRED' });
-  if (!(await canAccessCompany(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
+  if (!(await canAccessAccountingCompany(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
   const result = await query(
     `SELECT p.id,p.company_id,p.period_start::text,p.period_end::text,p.status,p.soft_closed_at,p.hard_closed_at,
             (SELECT COUNT(*)::int FROM journal_headers j WHERE j.company_id=p.company_id AND j.journal_date BETWEEN p.period_start AND p.period_end AND j.status='POSTED') posted_journals,

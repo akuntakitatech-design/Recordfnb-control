@@ -2,12 +2,15 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { FileUp, Plus, RefreshCw, Save, Search, ShieldCheck, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from './api';
-import { isQuinosInvoiceReport, parseQuinosInvoiceReport, type QuinosParseResult } from '../shared/quinosInvoiceParser';
+import { configureQuinosPaymentAliases, isQuinosInvoiceReport, parseQuinosInvoiceReport, type QuinosParseResult } from '../shared/quinosInvoiceParser';
 
 type Company = { id:string; workspace_id:string; name:string };
 type Location = { id:string; company_id:string; name:string; location_type:string };
 type Item = { id:string; code:string; name:string; base_unit_id:string; unit_code:string; track_stock:boolean; can_sell:boolean; category_name:string };
-type Context = { items:Item[]; paymentMappings:Array<{ payment_code:string; label:string }>; expectedPaymentMappings:number };
+type PosCode = { code:string; label:string; aliases:string[]; includeInReconciliation:boolean };
+type OutletPaymentMethod = { id:string; name:string; pos_payment_code:string; destination_behavior:string; evidence_policy:string; mapping_ready:boolean };
+// Status setup pembayaran bersumber dari master Payment Method Phase 2 (per outlet), bukan mapping pembayaran lama.
+type Context = { items:Item[]; posCodes?:PosCode[]; reconciliationFlow?:boolean; paymentMethods?:OutletPaymentMethod[]; paymentSetup?:{ activeMethods:number; readyMethods:number } };
 type Batch = {
   id:string; company_id:string; location_id:string; batch_number:string; source_type:string; source_name:string|null;
   status:string; row_count:number; invoice_count:number; total_sales:string; total_payments:string; created_at:string; verified_at:string|null; location_name:string;
@@ -22,6 +25,8 @@ type SaleRow = {
   saleDate:string; invoiceNumber:string; cashier:string; saleType:string; itemCode:string; itemName:string; itemId:string;
   quantity:string; unitPrice:string; discountAmount:string; lineTotal:string;
   cash:string; qris:string; transfer:string; compliment:string; gofood:string; grabfood:string;
+  /** Pembayaran per kode registry POS (CARD, SHOPEEFOOD, kode baru ...). */
+  payments?:Record<string,string>;
 };
 type ImportProfile = {
   id:string; name:string; provider:string|null; file_mode:string;
@@ -36,6 +41,12 @@ const EDITOR_PAGE_SIZE = 50;
 const BATCH_PAGE_SIZE = 25;
 const QUINOS_PROFILE_NAME = 'Quinos - Invoice Detail Report';
 const blankRow = ():SaleRow => ({ saleDate:new Date().toISOString().slice(0,10), invoiceNumber:'', cashier:'', saleType:'', itemCode:'', itemName:'', itemId:'', quantity:'1', unitPrice:'0', discountAmount:'0', lineTotal:'0', cash:'0', qris:'0', transfer:'0', compliment:'0', gofood:'0', grabfood:'0' });
+/** Kolom pembayaran mengikuti registry kode POS dari server (fallback daftar default). */
+const DEFAULT_POS_CODES:PosCode[] = [['CASH','Cash',['CASH','TUNAI']],['QRIS','QRIS',['QRIS','QRCODE']],['TRANSFER','Transfer',['TRANSFER','BANKTRANSFER']],['CARD','Debit/EDC (Kartu)',['CARD','DEBIT','EDC','KARTU']],
+  ['GOFOOD','GoFood',['GOFOOD']],['GRABFOOD','GrabFood',['GRABFOOD']],['SHOPEEFOOD','ShopeeFood',['SHOPEEFOOD']],['COMPLIMENT','Compliment',['COMPLIMENT','COMPLIMENTARY']]].map(([code,label,aliases])=>({ code:code as string, label:label as string, aliases:aliases as string[], includeInReconciliation:code!=='COMPLIMENT' }));
+const LEGACY_KEYS = new Set(['cash','qris','transfer','compliment','gofood','grabfood']);
+const payValue = (r:SaleRow, code:string) => r.payments?.[code] ?? (LEGACY_KEYS.has(code.toLowerCase()) ? (r as any)[code.toLowerCase()] : (r as any)[code.toLowerCase()]) ?? '0';
+const payPatch = (r:SaleRow, code:string, value:string):Partial<SaleRow> => ({ payments:{ ...(r.payments||{}), [code]:value }, ...(LEGACY_KEYS.has(code.toLowerCase()) ? { [code.toLowerCase()]:value } : {}) });
 const rupiah = (value:string|number) => new Intl.NumberFormat('id-ID',{ style:'currency', currency:'IDR', maximumFractionDigits:0 }).format(Number(value||0));
 
 function normalizeHeader(value:string) { return value.trim().toUpperCase().replace(/[^A-Z0-9]/g,''); }
@@ -67,7 +78,7 @@ function splitLine(line:string, delimiter:string) {
   }
   out.push(current); return out;
 }
-function parseTable(text:string) {
+function parseTable(text:string, posCodes:PosCode[] = DEFAULT_POS_CODES) {
   const lines=text.replace(/\r/g,'').split('\n').filter(x=>x.trim());
   if (lines.length<2) return [] as SaleRow[];
   const delimiter=lines[0].includes('\t')?'\t':lines[0].includes(';')?';':',';
@@ -77,6 +88,7 @@ function parseTable(text:string) {
     itemCode:['KODEBARANG','ITEMCODE','KODEITEM','SKU','PRODUCTCODE'], itemName:['NAMABARANG','ITEMNAME','NAMAPRODUK','PRODUCT','PRODUCTNAME','MENU'], quantity:['QTY','QUANTITY'], unitPrice:['HARGA','PRICE','UNITPRICE'],
     discountAmount:['DISKON','DISCOUNT'], lineTotal:['TOTAL','LINETOTAL','NETTOTAL','NETSALES','NETAMOUNT'], cash:['CASH','TUNAI'], qris:['QRIS','QRCODE'], transfer:['TRANSFER','BANKTRANSFER'], compliment:['COMPLIMENT','COMPLIMENTARY'],
     gofood:['GOFOOD'], grabfood:['GRABFOOD'],
+    ...Object.fromEntries(posCodes.map(c=>[`pay:${c.code}`,[c.code,...c.aliases].map(normalizeHeader)])),
   };
   const idx=(key:string)=>headers.findIndex(h=>aliases[key]?.includes(h));
   const index=Object.fromEntries(Object.keys(aliases).map(key=>[key,idx(key)]));
@@ -87,11 +99,12 @@ function parseTable(text:string) {
       quantity:normalizedNumber(get('quantity')||'1'), unitPrice:normalizedNumber(get('unitPrice')), discountAmount:normalizedNumber(get('discountAmount')),
       lineTotal:normalizedNumber(get('lineTotal')), cash:normalizedNumber(get('cash')), qris:normalizedNumber(get('qris')), transfer:normalizedNumber(get('transfer')),
       compliment:normalizedNumber(get('compliment')), gofood:normalizedNumber(get('gofood')), grabfood:normalizedNumber(get('grabfood')),
+      payments:Object.fromEntries(posCodes.map(c=>[c.code,normalizedNumber(get(`pay:${c.code}`))])),
     } satisfies SaleRow;
   });
 }
 
-export default function ClientSalesImportPage({ canVerify, canOverride }:{ canVerify:boolean; canOverride:boolean }) {
+export default function ClientSalesImportPage({ canVerify, canOverride, canImport = true }:{ canVerify:boolean; canOverride:boolean; canImport?:boolean }) {
   const [companies,setCompanies]=useState<Company[]>([]); const [locations,setLocations]=useState<Location[]>([]);
   const [companyId,setCompanyId]=useState(''); const [locationId,setLocationId]=useState(''); const [context,setContext]=useState<Context|null>(null);
   const [rows,setRows]=useState<SaleRow[]>([]); const [paste,setPaste]=useState(''); const [sourceType,setSourceType]=useState<'MANUAL'|'PASTE'|'CSV'>('PASTE'); const [sourceName,setSourceName]=useState('');
@@ -112,7 +125,7 @@ export default function ClientSalesImportPage({ canVerify, canOverride }:{ canVe
   }
   async function loadContext(cid=companyId,lid=locationId) {
     if(!cid||!lid) return;
-    try { setContext(await api<Context>(`/api/client-transactions/sales-context?companyId=${cid}&locationId=${lid}`)); }
+    try { const ctx=await api<Context>(`/api/client-transactions/sales-context?companyId=${cid}&locationId=${lid}`); if(ctx.posCodes?.length) configureQuinosPaymentAliases(ctx.posCodes); setContext(ctx); }
     catch(e){ setContext(null); setError(e instanceof Error?e.message:'Gagal memuat setup penjualan'); }
   }
   async function loadBatches(cid=companyId,page=batchPage) {
@@ -134,10 +147,14 @@ export default function ClientSalesImportPage({ canVerify, canOverride }:{ canVe
   const itemByName=useMemo(()=>new Map((context?.items||[]).map(x=>[x.name.trim().toLowerCase(),x])),[context]);
   const itemById=useMemo(()=>new Map((context?.items||[]).map(x=>[x.id,x])),[context]);
   const filteredBatches=useMemo(()=>{ const term=deferredSearch.trim().toLowerCase(); return term?batches.filter(x=>JSON.stringify(x).toLowerCase().includes(term)):batches; },[batches,deferredSearch]);
-  const totals=useMemo(()=>rows.reduce((a,r)=>({ sales:a.sales+Number(r.lineTotal||0), payments:a.payments+Number(r.cash||0)+Number(r.qris||0)+Number(r.transfer||0)+Number(r.compliment||0)+Number(r.gofood||0)+Number(r.grabfood||0) }),{sales:0,payments:0}),[rows]);
+  const posCodes=useMemo(()=>context?.posCodes?.length?context.posCodes:DEFAULT_POS_CODES,[context]);
+  const totals=useMemo(()=>rows.reduce((a,r)=>({ sales:a.sales+Number(r.lineTotal||0), payments:a.payments+posCodes.reduce((t,c)=>t+Number(payValue(r,c.code)||0),0) }),{sales:0,payments:0}),[rows,posCodes]);
   const editorPages=Math.max(1,Math.ceil(rows.length/EDITOR_PAGE_SIZE));
   const editorStart=(editorPage-1)*EDITOR_PAGE_SIZE;
   const visibleRows=useMemo(()=>rows.slice(editorStart,editorStart+EDITOR_PAGE_SIZE),[rows,editorStart]);
+  const setup=context?.paymentSetup||{ activeMethods:0, readyMethods:0 };
+  const setupReady=setup.activeMethods>0&&setup.readyMethods===setup.activeMethods;
+  const notReady=(context?.paymentMethods||[]).filter(m=>!m.mapping_ready).map(m=>m.name);
   const unmapped=useMemo(()=>{
     const grouped=new Map<string,{code:string;name:string;count:number}>();
     for(const row of rows.filter(x=>!x.itemId)){
@@ -181,7 +198,7 @@ export default function ClientSalesImportPage({ canVerify, canOverride }:{ canVe
   }
 
   function applyPaste() {
-    const parsed=parseTable(paste); if(!parsed.length){setError('Data belum terbaca. Pastikan baris pertama adalah header spreadsheet.');return;}
+    const parsed=parseTable(paste,posCodes); if(!parsed.length){setError('Data belum terbaca. Pastikan baris pertama adalah header spreadsheet.');return;}
     setRows(mapItems(parsed)); setEditorPage(1); setSourceType('PASTE'); setSourceName('Paste spreadsheet'); setParserSummary(null); setActiveProfile(null); setError('');
   }
 
@@ -206,13 +223,13 @@ export default function ClientSalesImportPage({ canVerify, canOverride }:{ canVe
           return;
         }
         const csv=XLSX.utils.sheet_to_csv(sheet);
-        const parsed=parseTable(csv);
+        const parsed=parseTable(csv,posCodes);
         if(!parsed.length) throw new Error('Format Excel belum dikenali. Buat Template POS atau gunakan file Quinos Invoice Detail Report.');
         setRows(mapItems(parsed)); setEditorPage(1); setSourceType('CSV'); setSourceName(file.name); setPaste('');
         setParserSummary({provider:'Excel Tabular',fileName:file.name,sheetName,invoiceCount:new Set(parsed.map(x=>`${x.saleDate}|${x.invoiceNumber}`)).size,rowCount:parsed.length,warnings:[],profileName:null});
         return;
       }
-      const text=await file.text(); const parsed=parseTable(text);
+      const text=await file.text(); const parsed=parseTable(text,posCodes);
       if(!parsed.length) throw new Error('CSV/TXT belum terbaca.');
       setRows(mapItems(parsed)); setEditorPage(1); setSourceType('CSV'); setSourceName(file.name); setPaste(''); setParserSummary(null);
     }catch(e){setError(e instanceof Error?e.message:'File belum dapat dibaca');}
@@ -237,7 +254,7 @@ export default function ClientSalesImportPage({ canVerify, canOverride }:{ canVe
     if(unmapped.length) return setError(`Masih ada ${unmapped.length} menu/kode POS yang belum dipetakan ke master item.`);
     setSaving(true); setError(''); setMessage('');
     try {
-      const result=await api<{id:string;batchNumber:string}>('/api/client-transactions/sales-batches',{method:'POST',body:JSON.stringify({companyId,locationId,sourceType,sourceName,rows})});
+      const result=await api<{id:string;batchNumber:string}>('/api/client-transactions/sales-batches',{method:'POST',body:JSON.stringify({companyId,locationId,sourceType,sourceName,rows:rows.map(r=>({ ...r, payments:Object.fromEntries(posCodes.map(c=>[c.code,payValue(r,c.code)])) }))})});
       setMessage(`Batch ${result.batchNumber} tersimpan. Jalankan Preview sebelum Finance Verified.`); setRows([]); setEditorPage(1); setPaste(''); setParserSummary(null); await loadBatches(companyId,1);
       if(canVerify) await openPreview(result.id);
     } catch(e){ setError(e instanceof Error?e.message:'Gagal menyimpan batch penjualan'); }
@@ -254,21 +271,21 @@ export default function ClientSalesImportPage({ canVerify, canOverride }:{ canVe
   if(loading) return <div className="page-content"><section className="section-card">Memuat Data Penjualan...</section></div>;
   return <div className="page-content sales-import-page">
     <section className="section-card">
-      <div className="section-title master-heading"><div><span className="eyebrow">FINANCE CONTROL · PENJUALAN</span><h3>Data Penjualan / Import POS</h3><p>Upload XLS/XLSX Quinos, Excel tabular, CSV/TXT, atau paste data. Format Quinos Invoice Detail Report dikenali dan dipecah otomatis per invoice.</p></div><button className="secondary-button compact" onClick={()=>{void loadContext();void loadBatches(companyId,batchPage);}}><RefreshCw size={15}/> Refresh</button></div>
-      <div className="sales-head-grid"><label>Company<select value={companyId} onChange={e=>setCompanyId(e.target.value)}>{companies.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>Outlet / Lokasi<select value={locationId} onChange={e=>setLocationId(e.target.value)}>{companyLocations.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><div className="sales-setup-status"><strong>Setup pembayaran {context?.paymentMappings.length||0}/{context?.expectedPaymentMappings||6}</strong><span>{(context?.paymentMappings.length||0)===(context?.expectedPaymentMappings||6)?'Siap untuk Finance Verified':'Akuntakita perlu melengkapi mapping pembayaran'}</span></div></div>
-      <div className="helper-box"><strong>Import fleksibel:</strong> file Quinos Invoice Detail Report (.xls/.xlsx) akan dibaca sebagai blok invoice. Kode menu dicocokkan lebih dulu ke master, lalu alias yang dipilih manual disimpan pada Template POS untuk import berikutnya.</div>
+      <div className="section-title master-heading"><div><span className="eyebrow">FINANCE CONTROL · PENJUALAN</span><h3>{canImport?'Data Penjualan / Import POS':'Data Penjualan'}</h3><p>{canImport?'Upload XLS/XLSX Quinos, Excel tabular, CSV/TXT, atau paste data. Format Quinos Invoice Detail Report dikenali dan dipecah otomatis per invoice.':'Riwayat data penjualan POS outlet Anda (lihat saja). Import POS dilakukan oleh Finance / Accounting.'}</p></div><button className="secondary-button compact" onClick={()=>{void loadContext();void loadBatches(companyId,batchPage);}}><RefreshCw size={15}/> Refresh</button></div>
+      <div className="sales-head-grid"><label>Company<select value={companyId} onChange={e=>setCompanyId(e.target.value)}>{companies.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>Outlet / Lokasi<select value={locationId} onChange={e=>setLocationId(e.target.value)}>{companyLocations.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><div className={`sales-setup-status ${setupReady?'':'warn'}`} data-testid="sales-payment-setup" title={notReady.length?`Belum lengkap: ${notReady.join(', ')}`:undefined}><strong data-testid="sales-payment-setup-count">Metode Pembayaran: {setup.activeMethods} aktif</strong><span data-testid="sales-payment-setup-message">{!setup.activeMethods?'Belum diatur — Accounting mengaktifkan metode outlet di menu Metode Pembayaran':setupReady?'Setup Pembayaran Lengkap — siap direkonsiliasi & diverifikasi':`${setup.activeMethods-setup.readyMethods} metode belum lengkap mapping akun (diatur Accounting)`}</span></div></div>
+      {canImport?<><div className="helper-box"><strong>Import fleksibel:</strong> file Quinos Invoice Detail Report (.xls/.xlsx) akan dibaca sebagai blok invoice. Kode menu dicocokkan lebih dulu ke master, lalu alias yang dipilih manual disimpan pada Template POS untuk import berikutnya.</div>
       {parserSummary&&<div className="helper-box"><strong>{parserSummary.provider}</strong> · {parserSummary.fileName} · sheet {parserSummary.sheetName}<br/><span>{parserSummary.invoiceCount} invoice · {parserSummary.rowCount} baris menu · template {parserSummary.profileName||'belum tersimpan'} · {unmapped.length} kode/menu belum mapping</span>{parserSummary.warnings.length>0&&<div style={{marginTop:8}}><strong>{parserSummary.warnings.length} catatan parser:</strong>{parserSummary.warnings.slice(0,8).map((w,i)=><div key={i}>• {w}</div>)}{parserSummary.warnings.length>8&&<div>• +{parserSummary.warnings.length-8} catatan lainnya</div>}</div>}</div>}
       <div className="sales-import-tools"><div className="paste-box"><textarea value={paste} onChange={e=>setPaste(e.target.value)} placeholder="Paste tabel dari Excel / Google Sheets di sini..."/><button className="secondary-button" onClick={applyPaste}>Baca Data Paste</button></div><label className="file-drop"><FileUp size={20}/><strong>Upload XLS / XLSX / CSV / TXT</strong><span>Quinos Invoice Detail Report akan dideteksi otomatis</span><input type="file" accept=".xls,.xlsx,.csv,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain" onChange={e=>{const f=e.target.files?.[0];if(f)void uploadFile(f);}}/></label></div>
       {unmapped.length>0&&<div className="stock-opname-warning"><div><strong>{unmapped.length} kode/menu belum dipetakan.</strong><span>Pilih Item / Mapping pada salah satu baris. Semua baris dengan kode yang sama ikut terisi dan alias disimpan untuk import Quinos berikutnya.</span></div></div>}
       <div className="table-toolbar"><div><button className="secondary-button compact" onClick={addRow}><Plus size={15}/> Baris Manual</button></div><span>{rows.length} baris · Penjualan {rupiah(totals.sales)}</span></div>
-      <div className="data-table-wrap sales-grid-wrap"><table className="sales-grid"><thead><tr><th>Tanggal</th><th>No Invoice</th><th>Cashier</th><th>Type</th><th>Kode</th><th>Item / Mapping</th><th>Qty</th><th>Harga</th><th>Diskon</th><th>Total</th><th>Cash</th><th>QRIS</th><th>Transfer</th><th>Compliment</th><th>GoFood</th><th>GrabFood</th><th></th></tr></thead><tbody>{visibleRows.map((r,localIndex)=>{const i=editorStart+localIndex;const mapped=itemById.get(r.itemId);return <tr key={i}><td><input type="date" value={r.saleDate} onChange={e=>patchRow(i,{saleDate:e.target.value})}/></td><td><input value={r.invoiceNumber} onChange={e=>patchRow(i,{invoiceNumber:e.target.value})}/></td><td><input value={r.cashier} onChange={e=>patchRow(i,{cashier:e.target.value})}/></td><td><input value={r.saleType} onChange={e=>patchRow(i,{saleType:e.target.value})}/></td><td><input value={r.itemCode} onChange={e=>patchRow(i,{itemCode:e.target.value,itemId:''})}/></td><td>{mapped?<div className="mapped-item"><strong>✓ {mapped.code}</strong><span>{mapped.name}</span><button type="button" onClick={()=>patchRow(i,{itemId:''})}>Ubah</button></div>:<select className="mapping-missing" value={r.itemId} onChange={e=>void chooseItem(i,e.target.value)}><option value="">{r.itemName||'Pilih item'}</option>{(context?.items||[]).map(x=><option key={x.id} value={x.id}>{x.code} — {x.name}</option>)}</select>}</td>{(['quantity','unitPrice','discountAmount','lineTotal','cash','qris','transfer','compliment','gofood','grabfood'] as const).map(k=><td key={k}><input className="number-input" value={r[k]} onChange={e=>patchRow(i,{[k]:normalizedNumber(e.target.value)} as Partial<SaleRow>)}/></td>)}<td><button className="icon-button danger" onClick={()=>setRows(v=>v.filter((_,x)=>x!==i))}><Trash2 size={15}/></button></td></tr>;})}</tbody></table>{!rows.length&&<div className="empty-state"><FileUp size={34}/><strong>Belum ada data penjualan</strong><span>Upload file Quinos/Excel, paste spreadsheet, CSV/TXT, atau tambah baris manual.</span></div>}</div>
+      <div className="data-table-wrap sales-grid-wrap"><table className="sales-grid"><thead><tr><th>Tanggal</th><th>No Invoice</th><th>Cashier</th><th>Type</th><th>Kode</th><th>Item / Mapping</th><th>Qty</th><th>Harga</th><th>Diskon</th><th>Total</th>{posCodes.map(c=><th key={c.code} data-testid={`sales-col-${c.code}`}>{c.label}</th>)}<th></th></tr></thead><tbody>{visibleRows.map((r,localIndex)=>{const i=editorStart+localIndex;const mapped=itemById.get(r.itemId);return <tr key={i}><td><input type="date" value={r.saleDate} onChange={e=>patchRow(i,{saleDate:e.target.value})}/></td><td><input value={r.invoiceNumber} onChange={e=>patchRow(i,{invoiceNumber:e.target.value})}/></td><td><input value={r.cashier} onChange={e=>patchRow(i,{cashier:e.target.value})}/></td><td><input value={r.saleType} onChange={e=>patchRow(i,{saleType:e.target.value})}/></td><td><input value={r.itemCode} onChange={e=>patchRow(i,{itemCode:e.target.value,itemId:''})}/></td><td>{mapped?<div className="mapped-item"><strong>✓ {mapped.code}</strong><span>{mapped.name}</span><button type="button" onClick={()=>patchRow(i,{itemId:''})}>Ubah</button></div>:<select className="mapping-missing" value={r.itemId} onChange={e=>void chooseItem(i,e.target.value)}><option value="">{r.itemName||'Pilih item'}</option>{(context?.items||[]).map(x=><option key={x.id} value={x.id}>{x.code} — {x.name}</option>)}</select>}</td>{(['quantity','unitPrice','discountAmount','lineTotal'] as const).map(k=><td key={k}><input className="number-input" value={r[k]} onChange={e=>patchRow(i,{[k]:normalizedNumber(e.target.value)} as Partial<SaleRow>)}/></td>)}{posCodes.map(c=><td key={c.code}><input className="number-input" value={payValue(r,c.code)} onChange={e=>patchRow(i,payPatch(r,c.code,normalizedNumber(e.target.value)))} data-testid={`sales-pay-${c.code}-${i}`}/></td>)}<td><button className="icon-button danger" onClick={()=>setRows(v=>v.filter((_,x)=>x!==i))}><Trash2 size={15}/></button></td></tr>;})}</tbody></table>{!rows.length&&<div className="empty-state"><FileUp size={34}/><strong>Belum ada data penjualan</strong><span>Upload file Quinos/Excel, paste spreadsheet, CSV/TXT, atau tambah baris manual.</span></div>}</div>
       {rows.length>EDITOR_PAGE_SIZE&&<div className="sales-pager"><button className="secondary-button compact" disabled={editorPage<=1} onClick={()=>setEditorPage(p=>p-1)}>Sebelumnya</button><span>Baris {editorStart+1}–{Math.min(editorStart+EDITOR_PAGE_SIZE,rows.length)} dari {rows.length} · Halaman {editorPage}/{editorPages}</span><button className="secondary-button compact" disabled={editorPage>=editorPages} onClick={()=>setEditorPage(p=>p+1)}>Berikutnya</button></div>}
       {error&&<div className="form-error">{error}</div>}{message&&<div className="form-success">{message}</div>}
-      <div className="sales-save-row"><div><strong>{rupiah(totals.sales)}</strong><span>Total data sementara · pembayaran baris {rupiah(totals.payments)}</span></div><button className="primary-button" disabled={saving||!rows.length||unmapped.length>0} onClick={saveBatch}><Save size={16}/>{saving?'Menyimpan...':unmapped.length?`${unmapped.length} Mapping Belum Selesai`:'Simpan Batch Penjualan'}</button></div>
+      <div className="sales-save-row"><div><strong>{rupiah(totals.sales)}</strong><span>Total data sementara · pembayaran baris {rupiah(totals.payments)}</span></div><button className="primary-button" disabled={saving||!rows.length||unmapped.length>0} onClick={saveBatch}><Save size={16}/>{saving?'Menyimpan...':unmapped.length?`${unmapped.length} Mapping Belum Selesai`:'Simpan Batch Penjualan'}</button></div></>:<div className="helper-box" data-testid="sales-import-finance-only"><strong>Import POS dilakukan Finance Control.</strong> Outlet mengisi <strong>Cash Drawer</strong> (uang/aktual per metode + foto bukti); Finance mengimport data POS dan merekonsiliasi.</div>}
     </section>
 
     <section className="section-card"><div className="section-title"><div><span className="eyebrow">RIWAYAT IMPORT</span><h3>Batch Penjualan</h3></div></div><div className="table-toolbar"><div className="search-box"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari pada halaman ini..."/></div><span>{batchTotal} batch</span></div><div className="data-table-wrap"><table><thead><tr><th>Batch</th><th>Lokasi</th><th>Sumber</th><th>Baris</th><th>Invoice</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>{filteredBatches.map(b=><tr key={b.id}><td><strong>{b.batch_number}</strong><br/><small>{new Date(b.created_at).toLocaleString('id-ID')}</small></td><td>{b.location_name}</td><td>{b.source_name||b.source_type}</td><td>{b.row_count}</td><td>{b.invoice_count||'—'}</td><td>{rupiah(b.total_sales)}</td><td><span className={b.status==='FINANCE_VERIFIED'?'status-ok':'status-warn'}>{b.status==='FINANCE_VERIFIED'?'Finance Verified':'Draft'}</span></td><td>{b.status==='DRAFT'&&canVerify&&<button className="secondary-button compact" onClick={()=>void openPreview(b.id)}>Preview & Verify</button>}</td></tr>)}</tbody></table></div>{batchPages>1&&<div className="sales-pager"><button className="secondary-button compact" disabled={batchPage<=1} onClick={()=>void loadBatches(companyId,batchPage-1)}>Sebelumnya</button><span>Halaman {batchPage}/{batchPages}</span><button className="secondary-button compact" disabled={batchPage>=batchPages} onClick={()=>void loadBatches(companyId,batchPage+1)}>Berikutnya</button></div>}</section>
 
-    {preview&&<div className="modal-backdrop" onMouseDown={()=>setPreview(null)}><div className="modal-card modal-wide sales-preview" onMouseDown={e=>e.stopPropagation()}><div><span className="eyebrow">PREVIEW FINANCE VERIFIED</span><h3>{preview.batchNumber}</h3><p className="modal-caption">{preview.invoiceCount} invoice · {preview.rowCount} baris · {rupiah(preview.totalSales)}</p></div>{preview.issues.length>0&&<div className="sales-issue-list"><strong>Perlu diperbaiki sebelum verifikasi</strong>{preview.issues.slice(0,12).map((x,i)=><span key={i}>{x.message}</span>)}{preview.issues.length>12&&<small>+ {preview.issues.length-12} issue lainnya</small>}</div>}{preview.shortages.length>0&&<div className="sales-shortage-list"><strong>Stok akan minus</strong>{preview.shortages.slice(0,10).map((x,i)=><span key={i}>{x.invoiceNumber} · {x.itemName}: tersedia {Number(x.available)} {x.unitCode}, jual {Number(x.requested)}, sisa {Number(x.after)} {x.unitCode}</span>)}{canOverride&&<label><input type="checkbox" checked={allowBelowZero} onChange={e=>setAllowBelowZero(e.target.checked)}/> Izinkan saldo minus untuk batch ini</label>}</div>}<div className="sales-preview-summary"><span>Total Penjualan <strong>{rupiah(preview.totalSales)}</strong></span><span>Total Pembayaran <strong>{rupiah(preview.totalPayments)}</strong></span></div><div className="modal-actions"><button className="secondary-button" onClick={()=>setPreview(null)}>Tutup</button><button className="primary-button" disabled={verifying||preview.issues.length>0||(preview.shortages.length>0&&!allowBelowZero)} onClick={()=>void verify()}><ShieldCheck size={16}/>{verifying?'Memproses...':'Finance Verified'}</button></div></div></div>}
+    {preview&&<div className="modal-backdrop" onMouseDown={()=>setPreview(null)}><div className="modal-card modal-wide sales-preview" onMouseDown={e=>e.stopPropagation()}><div><span className="eyebrow">PREVIEW FINANCE VERIFIED</span><h3>{preview.batchNumber}</h3><p className="modal-caption">{preview.invoiceCount} invoice · {preview.rowCount} baris · {rupiah(preview.totalSales)}</p></div>{preview.issues.length>0&&<div className="sales-issue-list"><strong>Perlu diperbaiki sebelum verifikasi</strong>{preview.issues.slice(0,12).map((x,i)=><span key={i}>{x.message}</span>)}{preview.issues.length>12&&<small>+ {preview.issues.length-12} issue lainnya</small>}</div>}{preview.shortages.length>0&&<div className="sales-shortage-list"><strong>Stok akan minus</strong>{preview.shortages.slice(0,10).map((x,i)=><span key={i}>{x.invoiceNumber} · {x.itemName}: tersedia {Number(x.available)} {x.unitCode}, jual {Number(x.requested)}, sisa {Number(x.after)} {x.unitCode}</span>)}{canOverride&&<label><input type="checkbox" checked={allowBelowZero} onChange={e=>setAllowBelowZero(e.target.checked)}/> Izinkan saldo minus untuk batch ini</label>}</div>}<div className="sales-preview-summary"><span>Total Penjualan <strong>{rupiah(preview.totalSales)}</strong></span><span>Total Pembayaran <strong>{rupiah(preview.totalPayments)}</strong></span></div><div className="modal-actions"><button className="secondary-button" onClick={()=>setPreview(null)}>Tutup</button>{context?.reconciliationFlow?<span className="helper-box" data-testid="sales-verify-via-recon">Outlet ini memakai Rekonsiliasi Penjualan: verifikasi dilakukan di menu <strong>Rekonsiliasi Penjualan</strong> setelah Cash Drawer outlet terisi.</span>:<button className="primary-button" disabled={verifying||preview.issues.length>0||(preview.shortages.length>0&&!allowBelowZero)} onClick={()=>void verify()}><ShieldCheck size={16}/>{verifying?'Memproses...':'Finance Verified'}</button>}</div></div></div>}
   </div>;
 }
