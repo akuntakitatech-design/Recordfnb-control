@@ -23,6 +23,10 @@ import {
   Users,
   UsersRound,
   WalletCards,
+  Wallet,
+  Scale,
+  HandCoins,
+  CreditCard,
 } from 'lucide-react';
 import { api } from './api';
 import { MasterItemCenter } from './MasterItemCenter';
@@ -43,6 +47,10 @@ import { ClientBomProduction } from './ClientBomProduction';
 import { ClientInventoryControl } from './ClientInventoryControl';
 import { CashBankCenter } from './CashBankCenter';
 import { AccountingCompanyPage } from './AccountingCompanyPage';
+import { CashDrawerPage } from './CashDrawerPage';
+import { SalesReconciliationPage } from './SalesReconciliationPage';
+import { SalesSettlementPage } from './SalesSettlementPage';
+import { PaymentMethodCenter } from './PaymentMethodCenter';
 
 type Membership = {
   workspace_id: string;
@@ -67,7 +75,7 @@ type Location = { id: string; company_id: string; code: string; name: string; lo
 type Page =
   | 'dashboard'
   // Finance Control
-  | 'sales' | 'cash-bank' | 'purchase' | 'payables' | 'item-usage' | 'stock-transfer' | 'stock-opname' | 'inventory-control' | 'production' | 'items' | 'partners'
+  | 'sales' | 'cash-drawer' | 'sales-reconciliation' | 'sales-settlement' | 'payment-methods' | 'cash-bank' | 'purchase' | 'payables' | 'item-usage' | 'stock-transfer' | 'stock-opname' | 'inventory-control' | 'production' | 'items' | 'partners'
   // Accounting Control
   | 'control' | 'accounting-source' | 'coa-standard' | 'transactions' | 'bom' | 'periods' | 'finance' | 'items-master'
   // Administrasi
@@ -114,6 +122,10 @@ const accountingOnly = (f: RoleFlags) => f.isAccounting;
 const NAV: NavGroup[] = [
   { label: 'Finance Control', items: [
     { page: 'sales', label: 'Penjualan', icon: <Store size={18}/>, allowed: operational },
+    // Phase 2: Cash Drawer (Outlet input; Accounting full; Finance/Owner lihat), Rekonsiliasi & Settlement (Finance; Owner lihat)
+    { page: 'cash-drawer', label: 'Cash Drawer', icon: <Wallet size={18}/>, allowed: f => f.isOutlet || f.financeArea || f.isOwner },
+    { page: 'sales-reconciliation', label: 'Rekonsiliasi Penjualan', icon: <Scale size={18}/>, allowed: f => f.financeArea || f.isOwner },
+    { page: 'sales-settlement', label: 'Settlement QRIS/OJOL', icon: <HandCoins size={18}/>, allowed: f => f.financeArea || f.isOwner },
     { page: 'cash-bank', label: 'Kas & Bank', icon: <Landmark size={18}/>, allowed: financeOrAcc },
     { page: 'purchase', label: 'Pembelian', icon: <ReceiptText size={18}/>, allowed: financeOrAcc },
     { page: 'payables', label: 'Hutang Supplier', icon: <WalletCards size={18}/>, allowed: financeOrAcc },
@@ -128,6 +140,7 @@ const NAV: NavGroup[] = [
   { label: 'Master Operasional', items: [
     { page: 'items', label: 'Barang / Item', icon: <Boxes size={18}/>, allowed: financeOrAcc },
     { page: 'partners', label: 'Supplier & Relasi', icon: <UsersRound size={18}/>, allowed: financeOrAcc },
+    { page: 'payment-methods', label: 'Metode Pembayaran', icon: <CreditCard size={18}/>, allowed: financeOrAcc },
   ] },
   { label: 'Accounting Control', items: [
     { page: 'control', label: 'Control Center', icon: <ShieldCheck size={18}/>, allowed: accountingOnly },
@@ -147,7 +160,7 @@ const NAV: NavGroup[] = [
 ];
 
 const pageTitles: Record<Page, string> = {
-  dashboard: 'Dashboard', sales: 'Penjualan / Import POS', 'cash-bank': 'Kas & Bank', purchase: 'Pembelian / Invoice Supplier', payables: 'Hutang Supplier',
+  dashboard: 'Dashboard', sales: 'Penjualan / Import POS', 'cash-drawer': 'Cash Drawer Outlet', 'sales-reconciliation': 'Rekonsiliasi & Verifikasi Penjualan', 'sales-settlement': 'Settlement QRIS / EDC / OJOL', 'payment-methods': 'Metode Pembayaran Outlet', 'cash-bank': 'Kas & Bank', purchase: 'Pembelian / Invoice Supplier', payables: 'Hutang Supplier',
   'item-usage': 'Pemakaian Barang', 'stock-transfer': 'Transfer Barang', 'stock-opname': 'Stock Opname', 'inventory-control': 'Kontrol Stok & Kartu Stok',
   production: 'Produksi', items: 'Barang / Item', partners: 'Supplier & Relasi',
   control: 'Accounting Control Center', 'accounting-source': 'Accounting Source', 'coa-standard': 'COA Standard & Mapping', transactions: 'Jurnal / Transaction Engine',
@@ -246,7 +259,11 @@ export function App() {
     <section className="content-shell">
       <header className="topbar"><div><span className="eyebrow">{portalLabel(flags).toUpperCase()}</span><h2 data-testid="page-title">{pageTitles[page]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
       {page === 'dashboard' && <Dashboard summary={summary} setActive={setActive} flags={flags} session={session}/>}
-      {page === 'sales' && <ClientSalesImport canVerify={flags.canVerify} canOverride={flags.canOverrideInventory}/>}
+      {page === 'sales' && <ClientSalesImport canVerify={flags.canVerify} canOverride={flags.canOverrideInventory} canImport={flags.financeArea}/>}
+      {page === 'cash-drawer' && <CashDrawerPage allowedLocationIds={outletOnly ? session.memberships.map(m => m.location_id).filter((x): x is string => Boolean(x)) : null}/>}
+      {page === 'sales-reconciliation' && <SalesReconciliationPage canVerify={flags.canVerify} canAccounting={flags.isAccounting} canOverride={flags.canOverrideInventory}/>}
+      {page === 'sales-settlement' && <SalesSettlementPage canCreate={flags.canVerify} canAccounting={flags.isAccounting}/>}
+      {page === 'payment-methods' && <PaymentMethodCenter canEdit={flags.isAccounting}/>}
       {page === 'cash-bank' && <CashBankCenter key="cash-bank" canVerify={flags.canVerify} canAccounting={flags.isAccounting}/>}
       {page === 'payables' && <CashBankCenter key="payables" initialTab="payables" canVerify={flags.canVerify} canAccounting={flags.isAccounting}/>}
       {page === 'purchase' && <ClientPurchaseInvoice canVerify={flags.canVerify}/>}
