@@ -17,6 +17,7 @@ function text(value: unknown) { return String(value ?? '').trim(); }
 const KIND: Record<string, string> = {
   CASH_OUT: 'Kas Keluar', CASH_IN: 'Kas Masuk', CASH_TRANSFER: 'Transfer Kas/Bank', PURCHASE_INVOICE: 'Invoice Pembelian',
   STOCK_USAGE: 'Pemakaian Barang', STOCK_TRANSFER: 'Transfer Barang', STOCK_OPNAME: 'Stock Opname', PRODUCTION: 'Produksi', SALES: 'Penjualan',
+  SALES_INVOICE: 'Penjualan POS', SALES_DIFFERENCE: 'Selisih Penjualan', SALES_SETTLEMENT: 'Settlement Penjualan',
 };
 
 export function stageOf(workflowStatus: string, accountingStatus: string) {
@@ -36,7 +37,10 @@ accountingControlRouter.get('/overview', async (req, res) => {
   const result = await query(
     `SELECT t.id,t.transaction_type,t.transaction_number,t.transaction_date::text,t.grand_total::text,t.workflow_status,t.accounting_status,
             t.cash_out_type,t.cash_in_type,t.payment_type,COALESCE(bp.name,t.payee_name,t.source_name) counterparty,
-            fa.name financial_account_name,l.name location_name,t.verified_at,
+            fa.name financial_account_name,l.name location_name,t.verified_at,t.location_id,t.reference_number,
+            COALESCE(t.source_module,CASE WHEN t.sales_import_batch_id IS NOT NULL THEN 'POS_IMPORT' END) source_module,t.source_reference_id,
+            (SELECT GROUP_CONCAT(DISTINCT REPLACE(JSON_VALUE(jl.metadata,'$.paymentCode'),'"','') SEPARATOR ', ') FROM journal_lines jl WHERE jl.journal_id=j.id) payment_codes,
+            (SELECT pm.name FROM payment_methods pm WHERE pm.id=t.source_reference_id) settlement_method,
             (SELECT COUNT(*)::int FROM attachments a WHERE a.entity_type='TRANSACTION' AND a.entity_id=t.id) attachment_count,
             j.id journal_id,j.journal_number,j.status journal_status,
             (SELECT COALESCE(SUM(jl.debit),0)::text FROM journal_lines jl WHERE jl.journal_id=j.id) journal_debit,
@@ -64,12 +68,14 @@ accountingControlRouter.get('/overview', async (req, res) => {
     const debit = Number(r.journal_debit || 0);
     const credit = Number(r.journal_credit || 0);
     if (stage === 'POSTED') bucket = 'POSTED';
-    else if (!r.journal_id && r.accounting_status === 'NEEDS_ACCOUNT_DIRECTION') { bucket = 'NEEDS_REVIEW'; issue = r.transaction_type === 'CASH_IN' ? 'Akun sumber dana belum ditentukan' : 'Kategori belum dipetakan ke akun — perlu arah akun'; }
+    else if (!r.journal_id && r.accounting_status === 'NEEDS_ACCOUNT_DIRECTION') { bucket = 'NEEDS_REVIEW'; issue = r.transaction_type === 'CASH_IN' ? 'Akun sumber dana belum ditentukan' : r.transaction_type === 'SALES_SETTLEMENT' ? 'Mapping clearing/MDR metode atau akun Selisih Settlement belum diatur Accounting' : r.transaction_type === 'SALES_DIFFERENCE' ? 'Akun Selisih Kas (CASH_DRAWER_VARIANCE) atau akun metode belum dipetakan' : 'Kategori belum dipetakan ke akun — perlu arah akun'; }
     else if (!r.journal_id) { bucket = 'ERROR'; issue = 'Finance Verified tetapi jurnal belum terbentuk (engine gagal)'; }
     else if (debit <= 0 || Math.abs(debit - credit) > 0.0001) { bucket = 'ERROR'; issue = `Jurnal tidak seimbang (D ${debit} / K ${credit})`; }
     else if (Number(r.inactive_accounts || 0) > 0) { bucket = 'ERROR'; issue = 'Jurnal memakai akun nonaktif'; }
     else if (r.period_status === 'HARD_CLOSED' && r.journal_status !== 'POSTED') { bucket = 'ERROR'; issue = 'Periode HARD CLOSED — jurnal belum posted; koreksi lewat adjustment/reversal'; }
-    return { ...r, kind: KIND[r.transaction_type] || r.transaction_type, stage, bucket, issue };
+    const payment_method = r.settlement_method || r.payment_codes || null;
+    const mapping_result = r.journal_id ? 'Jurnal otomatis terbentuk' : r.accounting_status === 'NEEDS_ACCOUNT_DIRECTION' ? 'Mapping belum lengkap' : 'Jurnal belum terbentuk';
+    return { ...r, kind: KIND[r.transaction_type] || r.transaction_type, stage, bucket, issue, payment_method, mapping_result };
   });
 
   const counts = { auto_ok: 0, needs_review: 0, error: 0, posted: 0 };

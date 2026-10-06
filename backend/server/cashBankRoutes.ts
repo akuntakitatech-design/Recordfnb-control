@@ -70,6 +70,21 @@ const MUTATIONS = `
          t.location_id,t.workflow_status,t.accounting_status,t.reference_number,NULL
     FROM transaction_headers t
    WHERE t.company_id=$1 AND t.transaction_type='CASH_TRANSFER' AND t.transfer_to_financial_account_id IS NOT NULL AND t.workflow_status NOT IN ${EXCLUDED}
+  UNION ALL
+  -- Phase 2: penjualan Cash / transfer langsung yang sudah Finance Verified (nilai aktual). source = SALES_VERIFICATION
+  SELECT srl.id,sr.reconciliation_number,srl.business_date,sr.verified_at,'SALES_VERIFICATION',CONCAT('Penjualan ',srl.method_name),0,
+         srl.financial_account_id,srl.actual_amount,0,CONCAT('POS ',l.name),
+         CONCAT('Verifikasi penjualan ',l.name,' ',DATE_FORMAT(srl.business_date,'%Y-%m-%d')),NULL,
+         srl.location_id,'FINANCE_VERIFIED','ACCOUNTING_REVIEW',sr.reconciliation_number,NULL
+    FROM sales_reconciliation_lines srl JOIN sales_reconciliations sr ON sr.id=srl.reconciliation_id JOIN locations l ON l.id=srl.location_id
+   WHERE srl.company_id=$1 AND srl.line_status='ACTIVE' AND srl.destination_behavior IN ('CASH_DIRECT','BANK_DIRECT') AND srl.financial_account_id IS NOT NULL AND srl.actual_amount>0
+  UNION ALL
+  -- Phase 2: penerimaan settlement QRIS/EDC/OJOL (nilai bersih masuk bank). source = QRIS_SETTLEMENT / OJOL_SETTLEMENT / ...
+  SELECT t.id,t.transaction_number,t.transaction_date,t.created_at,t.transaction_type,COALESCE(t.source_name,'Settlement'),0,
+         t.financial_account_id,t.grand_total,0,t.source_module,t.notes,NULL,
+         t.location_id,t.workflow_status,t.accounting_status,t.reference_number,NULL
+    FROM transaction_headers t
+   WHERE t.company_id=$1 AND t.transaction_type='SALES_SETTLEMENT' AND t.financial_account_id IS NOT NULL AND t.workflow_status NOT IN ${EXCLUDED}
 `;
 
 async function requireCompany(req: any, res: any, companyId: string) {

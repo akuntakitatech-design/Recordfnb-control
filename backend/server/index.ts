@@ -31,6 +31,7 @@ import { accountingCashInRouter } from './accountingCashInRoutes.js';
 import { cashBankRouter } from './cashBankRoutes.js';
 import { accountingControlRouter } from './accountingControlRoutes.js';
 import { accountingPeriodRouter } from './accountingPeriodRoutes.js';
+import { salesFlowRouter } from './salesFlowRoutes.js';
 import { AREA, canManageOrganizationCompany, canManageOrganizationWorkspace, isSystemAdmin, requireArea } from './access.js';
 import type { Request } from 'express';
 
@@ -41,6 +42,8 @@ const port = Number(process.env.PORT || 3000);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 
+// Phase 2: bukti foto Cash Drawer maks 7 MB (base64 ≈ 9.4 MB) — limit khusus endpoint bukti; ukuran file asli divalidasi di route.
+app.use('/api/sales-flow/evidence', express.json({ limit: '10mb' }));
 app.use(express.json({ limit: '8mb' }));
 app.use(cookieParser());
 
@@ -243,6 +246,8 @@ app.use('/api/journals', ...requireArea(AREA.ACCOUNTING));
 app.use('/api/accounting-cash-outs', ...requireArea(AREA.ACCOUNTING));
 app.use('/api/accounting-cash-ins', ...requireArea(AREA.ACCOUNTING));
 app.use('/api/accounting-control', ...requireArea(AREA.ACCOUNTING));
+// Phase 2: Cash Drawer & bukti = area operasional (Outlet); master metode, rekonsiliasi, settlement = area Finance.
+app.use('/api/sales-flow', ...requireArea(req => (/^\/(cash-drawers|evidence)\b/.test(req.path) ? AREA.OPERATIONAL : AREA.FINANCE)));
 app.use('/api/accounting-periods', ...requireArea(AREA.ACCOUNTING));
 
 app.use('/api/master', masterRouter);
@@ -265,6 +270,7 @@ app.use('/api/accounting-cash-outs', accountingCashOutRouter);
 app.use('/api/accounting-cash-ins', accountingCashInRouter);
 app.use('/api/cash-bank', cashBankRouter);
 app.use('/api/accounting-control', accountingControlRouter);
+app.use('/api/sales-flow', salesFlowRouter);
 app.use('/api/accounting-periods', accountingPeriodRouter);
 
 // Frontend disajikan oleh container Nginx terpisah (lihat /frontend). Mode single-container lama
@@ -276,7 +282,10 @@ if (process.env.SERVE_STATIC === '1') {
 
 // Safety net: error async dari handler (mis. duplikat unique key) tidak lagi mematikan proses,
 // melainkan dijawab sebagai JSON error.
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: req.path.startsWith('/api/sales-flow/evidence') ? 'EVIDENCE_MAX_7MB' : 'PAYLOAD_TOO_LARGE' });
+  }
   const duplicate = err?.code === '23505';
   const fk = err?.code === '23503';
   const status = duplicate ? 409 : fk ? 400 : 500;

@@ -201,6 +201,16 @@ export async function canReadFinanceCompany(userId: string, companyId: string) {
   return hasCompanyRole(userId, companyId, rolesOf('ACCOUNTING', 'FINANCE', 'OWNER'));
 }
 
+/** Phase 2: Cash Drawer diisi Outlet (outlet assignment) — Accounting full business access. Finance hanya melihat/mereview. */
+export async function canWriteCashDrawer(userId: string, companyId: string) {
+  return hasCompanyRole(userId, companyId, rolesOf('ACCOUNTING', 'OUTLET'));
+}
+
+/** Phase 2: baca Cash Drawer (Outlet dibatasi location di route). */
+export async function canReadCashDrawer(userId: string, companyId: string) {
+  return hasCompanyRole(userId, companyId, rolesOf('ACCOUNTING', 'FINANCE', 'OWNER', 'OUTLET'));
+}
+
 /** Jenis transaksi yang menjadi area kerja Outlet (dibatasi location assignment). */
 export const OUTLET_TRANSACTION_TYPES = new Set(['SALES_INVOICE', 'STOCK_USAGE', 'STOCK_TRANSFER', 'STOCK_OPNAME']);
 

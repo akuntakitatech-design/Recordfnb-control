@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canAccessLocation, canCreateTransaction, canVerifyTransaction } from './access.js';
+import { canAccessCompany, canAccessLocation, canCreateFinanceTransaction, canVerifyTransaction } from './access.js';
 import { previewSalesBatch, verifySalesBatch } from './salesImportEngine.js';
+import { loadPosCodes } from './posPaymentCodes.js';
 
 export const clientSalesRouter = Router();
 clientSalesRouter.use(requireAuth);
@@ -19,7 +20,7 @@ type NormalizedSalesRow = {
   row_no:number; sale_date:string; invoice_number:string; cashier:string|null; sale_type:string|null;
   item_code:string|null; item_name:string; item_id:string|null; quantity:number; unit_price:number;
   discount_amount:number; line_total:number; payment_cash:number; payment_qris:number; payment_transfer:number;
-  payment_compliment:number; payment_gofood:number; payment_grabfood:number; metadata:{ sourceRow:number };
+  payment_compliment:number; payment_gofood:number; payment_grabfood:number; payment_card:number; payment_shopeefood:number; payment_extra:string|null; metadata:{ sourceRow:number };
 };
 
 async function canOverride(userId: string, companyId: string) {
@@ -76,7 +77,15 @@ clientSalesRouter.get('/sales-context', async (req,res) => {
       [companyId],
     ),
   ]);
-  res.json({ items:items.rows, paymentMappings:mappings.rows, expectedPaymentMappings:6 });
+  const methods = await query(
+    `SELECT pm.id,pm.name,pml.pos_payment_code,pm.destination_behavior,pm.evidence_policy
+       FROM payment_method_locations pml JOIN payment_methods pm ON pm.id=pml.payment_method_id AND pm.status='ACTIVE'
+      WHERE pml.location_id=$1 ORDER BY pm.sort_order,pm.name`,
+    [locationId],
+  );
+  // reconciliationFlow=true -> verifikasi lewat Rekonsiliasi Penjualan (Phase 2), bukan verifikasi batch langsung.
+  const posCodes = (await loadPosCodes()).map(c => ({ code:c.code, label:c.label, aliases:c.aliases, includeInReconciliation:c.include_in_reconciliation }));
+  res.json({ items:items.rows, paymentMappings:mappings.rows, expectedPaymentMappings:posCodes.length, paymentMethods:methods.rows, reconciliationFlow:methods.rowCount > 0, posCodes });
 });
 
 clientSalesRouter.get('/sales-batches', async (req,res) => {
@@ -133,7 +142,8 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
     return res.status(400).json({ error:'SALES_BATCH_REQUIRED_FIELDS' });
   }
   if (rawRows.length > 2000) return res.status(400).json({ error:'SALES_BATCH_MAX_2000_ROWS' });
-  if (!(await canCreateTransaction(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'FORBIDDEN' });
+  // Phase 2: upload POS dikerjakan Finance Control (bukan Kasir/Outlet).
+  if (!(await canCreateFinanceTransaction(req.sessionUser!.id,companyId))) return res.status(403).json({ error:'POS_IMPORT_FINANCE_ONLY' });
   if (!(await canAccessLocation(req.sessionUser!.id,locationId))) return res.status(403).json({ error:'LOCATION_FORBIDDEN' });
 
   const company = await query<{ workspace_id:string }>('SELECT workspace_id FROM companies WHERE id=$1 AND status=\'ACTIVE\'', [companyId]);
@@ -149,6 +159,7 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
   const itemByCode = new Map(sellableItems.rows.map(item => [item.code.toUpperCase(),item]));
   const itemByName = new Map(sellableItems.rows.map(item => [item.name.trim().toLowerCase(),item]));
 
+  const registry = await loadPosCodes();
   let normalizedRows: NormalizedSalesRow[];
   try {
     normalizedRows = rawRows.map((row,index) => {
@@ -169,8 +180,21 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
       const matched = requestedItemId ? itemById.get(requestedItemId) : (itemByCode.get(itemCode) || itemByName.get(itemName.trim().toLowerCase()));
       if (requestedItemId && !matched) throw new Error(`ITEM_OUTSIDE_WORKSPACE_ROW_${index + 1}`);
 
-      const payments = [row.cash,row.qris,row.transfer,row.compliment,row.gofood,row.grabfood].map(num);
-      if (payments.some(value => !Number.isFinite(value) || value < 0)) throw new Error(`INVALID_PAYMENT_ROW_${index + 1}`);
+      // Pembayaran generik dari registry pos_payment_codes: row.payments{KODE:nilai} (baru) atau field lama (cash, qris, ...).
+      const payments: Record<string,number> = {};
+      for (const def of registry) {
+        const legacyKey = def.code.toLowerCase();
+        const raw = row.payments && typeof row.payments === 'object' && row.payments[def.code] !== undefined ? row.payments[def.code] : row[legacyKey];
+        const value = num(raw);
+        if (!Number.isFinite(value) || value < 0) throw new Error(`INVALID_PAYMENT_ROW_${index + 1}`);
+        payments[def.code] = value;
+      }
+      if (row.payments && typeof row.payments === 'object') {
+        const unknown = Object.keys(row.payments).filter(k => num(row.payments[k]) > 0 && !registry.some(d => d.code === k.toUpperCase()));
+        if (unknown.length) throw new Error(`UNKNOWN_POS_PAYMENT_CODE_${unknown[0]}`);
+      }
+      const legacy = (code: string) => payments[code] || 0;
+      const extra = Object.fromEntries(registry.filter(d => !d.legacy_column && payments[d.code] > 0).map(d => [d.code,payments[d.code]]));
 
       return {
         row_no:index+1,
@@ -185,12 +209,15 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
         unit_price:unitPrice,
         discount_amount:discountAmount,
         line_total:lineTotal,
-        payment_cash:payments[0],
-        payment_qris:payments[1],
-        payment_transfer:payments[2],
-        payment_compliment:payments[3],
-        payment_gofood:payments[4],
-        payment_grabfood:payments[5],
+        payment_cash:legacy('CASH'),
+        payment_qris:legacy('QRIS'),
+        payment_transfer:legacy('TRANSFER'),
+        payment_compliment:legacy('COMPLIMENT'),
+        payment_gofood:legacy('GOFOOD'),
+        payment_grabfood:legacy('GRABFOOD'),
+        payment_card:legacy('CARD'),
+        payment_shopeefood:legacy('SHOPEEFOOD'),
+        payment_extra:Object.keys(extra).length ? JSON.stringify(extra) : null,
         metadata:{ sourceRow:index+1 },
       };
     });
@@ -201,24 +228,57 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
   const firstDate = normalizedRows[0]?.sale_date;
   if (!firstDate) return res.status(400).json({ error:'VALID_SALE_DATE_REQUIRED' });
 
+  // Phase 2 — cegah duplicate import: kombinasi outlet + tanggal + nomor invoice POS yang sudah ada di batch aktif
+  // (Imported/Draft) atau sudah menjadi penjualan terverifikasi tidak boleh diimport ulang.
+  const invoiceKeys = [...new Set(normalizedRows.map(r => `${r.sale_date}|${r.invoice_number}`))];
+  const invoiceNumbers = [...new Set(normalizedRows.map(r => r.invoice_number))];
+  const dup = await query<{ sale_date:string; invoice_number:string }>(
+    `SELECT DISTINCT x.sale_date::text sale_date,x.invoice_number FROM (
+       SELECT r.sale_date,r.invoice_number FROM sales_import_rows r JOIN sales_import_batches b ON b.id=r.batch_id
+        WHERE b.location_id=$1 AND b.status<>'VOID' AND r.invoice_number=ANY($2::text[])
+       UNION ALL
+       SELECT t.transaction_date,t.reference_number FROM transaction_headers t
+        WHERE t.location_id=$1 AND t.transaction_type='SALES_INVOICE' AND t.workflow_status NOT IN ('CANCELLED','VOID') AND t.reference_number=ANY($2::text[])
+     ) x`,
+    [locationId,invoiceNumbers],
+  );
+  const dupKeys = dup.rows.map(r => `${String(r.sale_date).slice(0,10)}|${r.invoice_number}`).filter(k => invoiceKeys.includes(k));
+  if (dupKeys.length) {
+    return res.status(409).json({ error:'DUPLICATE_POS_IMPORT', duplicates:dupKeys.slice(0,50), duplicateCount:dupKeys.length });
+  }
+  // Tanggal yang sudah Finance Verified (rekonsiliasi terkunci) tidak boleh menerima import baru — koreksi lewat adjustment.
+  const lockedDates = await query<{ d:string }>(
+    `SELECT business_date::text d FROM sales_reconciliations WHERE location_id=$1 AND status='VERIFIED' AND business_date=ANY($2::text[])`,
+    [locationId,[...new Set(normalizedRows.map(r => r.sale_date))]],
+  );
+  if (lockedDates.rowCount) return res.status(409).json({ error:'SALES_DATE_ALREADY_VERIFIED', dates:lockedDates.rows.map(r => String(r.d).slice(0,10)) });
+
+  // Phase 2 — 1 batch = 1 outlet + 1 tanggal bisnis (file multi-tanggal dipecah otomatis) agar rekonsiliasi per tanggal bersih.
+  const byDate = new Map<string,NormalizedSalesRow[]>();
+  for (const row of normalizedRows) byDate.set(row.sale_date,[...(byDate.get(row.sale_date) || []),row]);
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const batchNumber = await nextBatchNumber(client,companyId,firstDate);
+    const created: Array<{ id:string; batchNumber:string; saleDate:string; rowCount:number }> = [];
+    for (const [saleDate,dateRowsRaw] of [...byDate.entries()].sort()) {
+    const dateRows = dateRowsRaw.map((r,i) => ({ ...r, row_no:i+1 }));
+    const batchNumber = await nextBatchNumber(client,companyId,saleDate);
     const batch = await client.query<{ id:string }>(
       `INSERT INTO sales_import_batches(workspace_id,company_id,location_id,batch_number,source_type,source_name,row_count,created_by)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING id`,
-      [company.rows[0].workspace_id,companyId,locationId,batchNumber,sourceType,sourceName,normalizedRows.length,req.sessionUser!.id],
+      [company.rows[0].workspace_id,companyId,locationId,batchNumber,sourceType,sourceName,dateRows.length,req.sessionUser!.id],
     );
 
     await client.query(
       `INSERT INTO sales_import_rows(
          batch_id,row_no,sale_date,invoice_number,cashier,sale_type,item_code,item_name,item_id,quantity,unit_price,
-         discount_amount,line_total,payment_cash,payment_qris,payment_transfer,payment_compliment,payment_gofood,payment_grabfood,metadata)
+         discount_amount,line_total,payment_cash,payment_qris,payment_transfer,payment_compliment,payment_gofood,payment_grabfood,
+         payment_card,payment_shopeefood,payment_extra,metadata)
        SELECT $1::uuid,x.row_no,x.sale_date,x.invoice_number,x.cashier,x.sale_type,x.item_code,x.item_name,x.item_id,
               x.quantity,x.unit_price,x.discount_amount,x.line_total,x.payment_cash,x.payment_qris,x.payment_transfer,
-              x.payment_compliment,x.payment_gofood,x.payment_grabfood,x.metadata
+              x.payment_compliment,x.payment_gofood,x.payment_grabfood,x.payment_card,x.payment_shopeefood,x.payment_extra,x.metadata
          FROM JSON_TABLE($2, '$[*]' COLUMNS (
            row_no INT PATH '$.row_no', sale_date DATE PATH '$.sale_date', invoice_number VARCHAR(191) PATH '$.invoice_number',
            cashier VARCHAR(500) PATH '$.cashier', sale_type VARCHAR(191) PATH '$.sale_type', item_code VARCHAR(191) PATH '$.item_code',
@@ -227,19 +287,22 @@ clientSalesRouter.post('/sales-batches', async (req,res) => {
            line_total DECIMAL(20,4) PATH '$.line_total', payment_cash DECIMAL(20,4) PATH '$.payment_cash', payment_qris DECIMAL(20,4) PATH '$.payment_qris',
            payment_transfer DECIMAL(20,4) PATH '$.payment_transfer', payment_compliment DECIMAL(20,4) PATH '$.payment_compliment',
            payment_gofood DECIMAL(20,4) PATH '$.payment_gofood', payment_grabfood DECIMAL(20,4) PATH '$.payment_grabfood',
+           payment_card DECIMAL(20,4) PATH '$.payment_card', payment_shopeefood DECIMAL(20,4) PATH '$.payment_shopeefood', payment_extra LONGTEXT PATH '$.payment_extra',
            metadata LONGTEXT PATH '$.metadata'
          )) AS x`,
       // MariaDB JSON_TABLE mengembalikan NULL untuk nilai objek -> metadata dikirim sebagai string JSON per baris
-      [batch.rows[0].id,JSON.stringify(normalizedRows.map(r => ({ ...r, metadata: JSON.stringify(r.metadata ?? {}) })))],
+      [batch.rows[0].id,JSON.stringify(dateRows.map(r => ({ ...r, metadata: JSON.stringify(r.metadata ?? {}) })))],
     );
 
     await client.query(
       `INSERT INTO audit_logs(workspace_id,user_id,entity_type,entity_id,action,after_data)
        VALUES($1,$2,'SALES_IMPORT_BATCH',$3,'CLIENT_CREATE_SALES_BATCH',$4::jsonb)`,
-      [company.rows[0].workspace_id,req.sessionUser!.id,batch.rows[0].id,JSON.stringify({ batchNumber, sourceType, sourceName, rowCount:normalizedRows.length, insertMode:'BULK' })],
+      [company.rows[0].workspace_id,req.sessionUser!.id,batch.rows[0].id,JSON.stringify({ batchNumber, sourceType, sourceName, saleDate, rowCount:dateRows.length, insertMode:'BULK' })],
     );
+    created.push({ id:batch.rows[0].id, batchNumber, saleDate, rowCount:dateRows.length });
+    }
     await client.query('COMMIT');
-    res.status(201).json({ id:batch.rows[0].id,batchNumber });
+    res.status(201).json({ id:created[0].id, batchNumber:created[0].batchNumber, batches:created, status:'IMPORTED' });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Create sales batch failed:',error);
@@ -269,9 +332,34 @@ clientSalesRouter.post('/sales-batches/:batchId/verify', async (req,res) => {
   if (allowBelowZero && !(await canOverride(req.sessionUser!.id,batch.rows[0].company_id))) {
     return res.status(403).json({ error:'INVENTORY_OVERRIDE_MANAGER_REQUIRED' });
   }
+  // Phase 2: outlet yang sudah memakai master metode pembayaran wajib lewat Rekonsiliasi Penjualan (POS vs Cash Drawer).
+  const flow = await query('SELECT 1 FROM payment_method_locations pml JOIN payment_methods pm ON pm.id=pml.payment_method_id AND pm.status=\'ACTIVE\' WHERE pml.location_id=$1 LIMIT 1', [batch.rows[0].location_id]);
+  if (flow.rowCount) return res.status(409).json({ error:'SALES_VERIFY_VIA_RECONCILIATION' });
   try { res.json({ ok:true, ...(await verifySalesBatch(batchId,req.sessionUser!.id,allowBelowZero)) }); }
   catch (error) {
     console.error('Verify sales batch failed:',error);
     res.status(400).json({ error:error instanceof Error ? error.message : 'VERIFY_SALES_BATCH_FAILED' });
   }
+});
+
+/**
+ * Phase 2 — batalkan batch POS yang masih DRAFT (mis. salah file / koreksi setelah reopen Accounting).
+ * Hanya Finance/Accounting, alasan wajib. Baris tetap tersimpan (status VOID) sehingga histori tidak hilang
+ * dan invoice yang sama boleh diimport ulang.
+ */
+clientSalesRouter.post('/sales-batches/:batchId/void', async (req,res) => {
+  const batchId = text(req.params.batchId);
+  const reason = text(req.body?.reason);
+  const batch = await query<{ company_id:string; location_id:string; workspace_id:string; status:string; batch_number:string }>(
+    'SELECT company_id,location_id,workspace_id,status,batch_number FROM sales_import_batches WHERE id=$1', [batchId]);
+  if (!batch.rowCount) return res.status(404).json({ error:'SALES_BATCH_NOT_FOUND' });
+  const b = batch.rows[0];
+  if (!(await canCreateFinanceTransaction(req.sessionUser!.id,b.company_id))) return res.status(403).json({ error:'POS_IMPORT_FINANCE_ONLY' });
+  if (!(await canAccessLocation(req.sessionUser!.id,b.location_id))) return res.status(403).json({ error:'LOCATION_FORBIDDEN' });
+  if (b.status !== 'DRAFT') return res.status(409).json({ error:`SALES_BATCH_STATUS_MUST_BE_DRAFT_${b.status}` });
+  if (reason.length < 5) return res.status(400).json({ error:'VOID_REASON_REQUIRED' });
+  await query(`UPDATE sales_import_batches SET status='VOID' WHERE id=$1 AND status='DRAFT'`, [batchId]);
+  await query(`INSERT INTO audit_logs(workspace_id,user_id,entity_type,entity_id,action,before_data,after_data) VALUES($1,$2,'SALES_IMPORT_BATCH',$3,'VOID_SALES_BATCH',$4::jsonb,$5::jsonb)`,
+    [b.workspace_id,req.sessionUser!.id,batchId,JSON.stringify({ status:'DRAFT', batchNumber:b.batch_number }),JSON.stringify({ status:'VOID', reason })]);
+  res.json({ ok:true, status:'VOID' });
 });
