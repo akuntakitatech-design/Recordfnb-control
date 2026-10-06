@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canPostJournal, canReviewJournal } from './access.js';
+import { canAccessAccountingCompany, canPostJournal, canReviewJournal } from './access.js';
 import { assertPeriodAllows, periodStatusFor } from './periodGuard.js';
 
 export const journalRouter = Router();
@@ -12,7 +12,7 @@ function text(value: unknown) { return String(value ?? '').trim(); }
 journalRouter.get('/recent', async (req, res) => {
   const companyId = text(req.query.companyId);
   if (!companyId) return res.status(400).json({ error: 'COMPANY_REQUIRED' });
-  if (!(await canAccessCompany(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
+  if (!(await canAccessAccountingCompany(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
 
   const result = await query(
     `SELECT j.id,j.journal_number,j.journal_date,j.journal_type,j.status,j.description,j.engine_version,
@@ -35,7 +35,7 @@ journalRouter.get('/:journalId', async (req, res) => {
   const journalId = text(req.params.journalId);
   const header = await query<{ company_id: string }>('SELECT company_id FROM journal_headers WHERE id=$1', [journalId]);
   if (!header.rowCount) return res.status(404).json({ error: 'JOURNAL_NOT_FOUND' });
-  if (!(await canAccessCompany(req.sessionUser!.id, header.rows[0].company_id))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
+  if (!(await canAccessAccountingCompany(req.sessionUser!.id, header.rows[0].company_id))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
 
   const [journal, lines] = await Promise.all([
     query(

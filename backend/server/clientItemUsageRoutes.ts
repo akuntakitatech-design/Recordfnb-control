@@ -17,7 +17,7 @@ async function nextNumber(client:any,companyId:string,date:string){
 }
 
 async function canOverride(userId:string,companyId:string){
-  const r=await query(`SELECT 1 FROM users u WHERE u.id=$1 AND u.status='ACTIVE' AND u.is_system_admin UNION ALL SELECT 1 FROM companies c JOIN workspace_memberships wm ON wm.workspace_id=c.workspace_id JOIN roles ro ON ro.id=wm.role_id WHERE c.id=$2 AND wm.user_id=$1 AND wm.status='ACTIVE' AND (wm.company_id IS NULL OR wm.company_id=c.id) AND ro.code=ANY($3::text[]) LIMIT 1`,[userId,companyId,['AK_SUPER_ADMIN','AK_ACCOUNTING_REVIEWER','AK_ACCOUNTING_STAFF','CLIENT_FINANCE_MANAGER']]);
+  const r=await query(`SELECT 1 FROM companies c JOIN workspace_memberships wm ON wm.workspace_id=c.workspace_id JOIN roles ro ON ro.id=wm.role_id WHERE c.id=$2 AND wm.user_id=$1 AND wm.status='ACTIVE' AND (wm.company_id IS NULL OR wm.company_id=c.id) AND ro.code=ANY($3::text[]) LIMIT 1`,[userId,companyId,['AK_SUPER_ADMIN','AK_ACCOUNTING_REVIEWER','AK_ACCOUNTING_STAFF','CLIENT_FINANCE_MANAGER']]);
   return Boolean(r.rowCount);
 }
 
@@ -32,7 +32,7 @@ clientItemUsageRouter.get('/item-usage-balances',async(req,res)=>{
 clientItemUsageRouter.get('/item-usages',async(req,res)=>{
   const companyId=text(req.query.companyId);
   if(companyId&&!(await canAccessCompany(req.sessionUser!.id,companyId)))return res.status(403).json({error:'FORBIDDEN_COMPANY'});
-  const r=await query(`SELECT t.id,t.company_id,t.location_id,t.transaction_number,t.transaction_date,t.notes,t.grand_total::text,t.workflow_status,t.accounting_status,t.negative_stock_override,l.name location_name,COUNT(tl.id)::int line_count FROM transaction_headers t LEFT JOIN locations l ON l.id=t.location_id LEFT JOIN transaction_lines tl ON tl.transaction_id=t.id WHERE t.transaction_type='STOCK_USAGE' AND ($1='' OR t.company_id=$1::uuid) AND (EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.is_system_admin AND u.status='ACTIVE') OR EXISTS(SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE' AND (wm.company_id IS NULL OR wm.company_id=t.company_id) AND (wm.location_id IS NULL OR wm.location_id=t.location_id))) GROUP BY t.id,l.name ORDER BY t.transaction_date DESC,t.created_at DESC LIMIT 100`,[companyId,req.sessionUser!.id]);
+  const r=await query(`SELECT t.id,t.company_id,t.location_id,t.transaction_number,t.transaction_date,t.notes,t.grand_total::text,t.workflow_status,t.accounting_status,t.negative_stock_override,l.name location_name,COUNT(tl.id)::int line_count FROM transaction_headers t LEFT JOIN locations l ON l.id=t.location_id LEFT JOIN transaction_lines tl ON tl.transaction_id=t.id WHERE t.transaction_type='STOCK_USAGE' AND ($1='' OR t.company_id=$1::uuid) AND (FALSE /* system admin bukan akses bisnis (Role V2) */ OR EXISTS(SELECT 1 FROM workspace_memberships wm WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE' AND (wm.company_id IS NULL OR wm.company_id=t.company_id) AND (wm.location_id IS NULL OR wm.location_id=t.location_id))) GROUP BY t.id,l.name ORDER BY t.transaction_date DESC,t.created_at DESC LIMIT 100`,[companyId,req.sessionUser!.id]);
   res.json(r.rows);
 });
 

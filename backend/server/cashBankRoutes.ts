@@ -10,7 +10,7 @@ import * as XLSX from 'xlsx';
 import Decimal from 'decimal.js';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canAccessLocation, canCreateTransaction, canVerifyTransaction } from './access.js';
+import { canAccessCompany, canAccessLocation, canCreateFinanceTransaction, canVerifyTransaction } from './access.js';
 import { verifyTransactionAndGenerateJournal } from './journalEngine.js';
 import { recalcInvoicePaymentStatus } from './cashOutEngine.js';
 import { assertPeriodAllows } from './periodGuard.js';
@@ -338,7 +338,7 @@ cashBankRouter.post('/transfers', async (req, res) => {
   if (!companyId || !fromAccountId || !toAccountId || !isDate(transactionDate)) return res.status(400).json({ error: 'TRANSFER_HEADER_REQUIRED' });
   if (fromAccountId === toAccountId) return res.status(400).json({ error: 'TRANSFER_ACCOUNTS_MUST_DIFFER' });
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'POSITIVE_TRANSFER_AMOUNT_REQUIRED' });
-  if (!(await canCreateTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (!(await canCreateFinanceTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
 
   const company = await query<{ workspace_id: string }>(`SELECT workspace_id FROM companies WHERE id=$1 AND status='ACTIVE'`, [companyId]);
   if (!company.rowCount) return res.status(404).json({ error: 'COMPANY_NOT_FOUND' });
@@ -471,7 +471,7 @@ cashBankRouter.post('/transactions/:transactionId/cancel', async (req, res) => {
     if (!tx.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'TRANSACTION_NOT_FOUND' }); }
     const t = tx.rows[0];
     if (!['CASH_OUT', 'CASH_IN', 'CASH_TRANSFER'].includes(t.transaction_type)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'ONLY_CASH_TRANSACTIONS_CAN_BE_CANCELLED' }); }
-    if (!(await canCreateTransaction(req.sessionUser!.id, t.company_id))) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'FORBIDDEN' }); }
+    if (!(await canCreateFinanceTransaction(req.sessionUser!.id, t.company_id))) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'FORBIDDEN' }); }
     if (t.location_id && !(await canAccessLocation(req.sessionUser!.id, t.location_id))) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'LOCATION_FORBIDDEN' }); }
     if (t.workflow_status !== 'DRAFT') { await client.query('ROLLBACK'); return res.status(409).json({ error: 'ONLY_DRAFT_CAN_BE_CANCELLED' }); }
     try { await assertPeriodAllows(client, t.company_id, t.transaction_date, 'FINANCE'); }

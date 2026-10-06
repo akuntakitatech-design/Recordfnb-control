@@ -1,7 +1,7 @@
 {
   "name": "akuntakita-fnb-control-api",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.18.0",
   "type": "module",
   "description": "Akuntakita F&B Control - Backend API (Express + MariaDB + Cloudflare R2)",
   "scripts": {

@@ -24,9 +24,7 @@ type NormalizedSalesRow = {
 
 async function canOverride(userId: string, companyId: string) {
   const result = await query(
-    `SELECT 1 FROM users u WHERE u.id=$1 AND u.status='ACTIVE' AND u.is_system_admin
-     UNION ALL
-     SELECT 1
+    `SELECT 1
        FROM companies c
        JOIN workspace_memberships wm ON wm.workspace_id=c.workspace_id
        JOIN roles r ON r.id=wm.role_id
@@ -91,7 +89,7 @@ clientSalesRouter.get('/sales-batches', async (req,res) => {
   const offset = (requestedPage - 1) * pageSize;
 
   const accessSql = `(
-    EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.is_system_admin AND u.status='ACTIVE')
+    FALSE /* system admin bukan akses bisnis (Role V2) */
     OR EXISTS(
       SELECT 1 FROM workspace_memberships wm
        WHERE wm.user_id=$2 AND wm.workspace_id=b.workspace_id AND wm.status='ACTIVE'

@@ -71,7 +71,7 @@ clientStockOpnameRouter.get('/stock-opnames', async (req, res) => {
       WHERE t.transaction_type='STOCK_OPNAME'
         AND ($1='' OR t.company_id=$1::uuid)
         AND (
-          EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.is_system_admin AND u.status='ACTIVE')
+          FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS(
             SELECT 1 FROM workspace_memberships wm
              WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE'

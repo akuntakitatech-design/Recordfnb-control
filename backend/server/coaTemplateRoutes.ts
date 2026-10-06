@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany, canWriteCompanyMaster } from './access.js';
+import { canAccessAccountingCompany, canWriteCompanyMaster } from './access.js';
 
 export const coaTemplateRouter = Router();
 coaTemplateRouter.use(requireAuth);
@@ -10,7 +10,7 @@ function text(value: unknown) { return String(value ?? '').trim(); }
 function nullable(value: unknown) { const v = text(value); return v || null; }
 
 async function requireCompanyRead(userId: string, companyId: string) {
-  return Boolean(companyId && await canAccessCompany(userId, companyId));
+  return Boolean(companyId && await canAccessAccountingCompany(userId, companyId));
 }
 
 async function requireCompanyWrite(userId: string, companyId: string) {

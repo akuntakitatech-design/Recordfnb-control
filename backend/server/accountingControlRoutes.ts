@@ -7,7 +7,7 @@
 import { Router } from 'express';
 import { query } from './db.js';
 import { requireAuth } from './auth.js';
-import { canAccessCompany } from './access.js';
+import { canAccessAccountingCompany } from './access.js';
 
 export const accountingControlRouter = Router();
 accountingControlRouter.use(requireAuth);
@@ -31,7 +31,7 @@ export function stageOf(workflowStatus: string, accountingStatus: string) {
 accountingControlRouter.get('/overview', async (req, res) => {
   const companyId = text(req.query.companyId);
   if (!companyId) return res.status(400).json({ error: 'COMPANY_REQUIRED' });
-  if (!(await canAccessCompany(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
+  if (!(await canAccessAccountingCompany(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN_COMPANY' });
 
   const result = await query(
     `SELECT t.id,t.transaction_type,t.transaction_number,t.transaction_date::text,t.grand_total::text,t.workflow_status,t.accounting_status,

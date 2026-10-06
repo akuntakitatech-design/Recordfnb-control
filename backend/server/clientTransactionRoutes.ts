@@ -4,7 +4,15 @@ import crypto from 'node:crypto';
 import { pool, query } from './db.js';
 import { requireAuth } from './auth.js';
 import { storage } from './storage.js';
-import { canAccessCompany, canAccessLocation, canCreateTransaction, hasUnrestrictedLocationAccess } from './access.js';
+import {
+  OUTLET_TRANSACTION_TYPES,
+  canAccessCompany,
+  canAccessLocation,
+  canCreateFinanceTransaction,
+  canCreateTransaction,
+  canReadFinanceCompany,
+  hasUnrestrictedLocationAccess,
+} from './access.js';
 import { calculateDocument, type DocumentDiscount, type TransactionLineInput } from '../shared/transactionMath.js';
 import { assertPeriodAllows } from './periodGuard.js';
 
@@ -38,13 +46,15 @@ function addDays(dateText: string, days: number) {
 }
 
 async function requireTransactionAccess(userId: string, transactionId: string) {
-  const result = await query<{ workspace_id: string; company_id: string; location_id: string | null }>(
-    `SELECT workspace_id,company_id,location_id FROM transaction_headers WHERE id=$1`, [transactionId],
+  const result = await query<{ workspace_id: string; company_id: string; location_id: string | null; transaction_type: string }>(
+    `SELECT workspace_id,company_id,location_id,transaction_type FROM transaction_headers WHERE id=$1`, [transactionId],
   );
   if (!result.rowCount) return null;
   const tx = result.rows[0];
   if (!(await canAccessCompany(userId, tx.company_id))) return null;
   if (tx.location_id && !(await canAccessLocation(userId, tx.location_id))) return null;
+  // Outlet hanya menyentuh transaksi area outlet (penjualan, pemakaian, transfer, stock opname).
+  if (!OUTLET_TRANSACTION_TYPES.has(tx.transaction_type) && !(await canReadFinanceCompany(userId, tx.company_id))) return null;
   return tx;
 }
 
@@ -65,7 +75,7 @@ clientTransactionRouter.get('/purchase-invoices', async (req, res) => {
        LEFT JOIN financial_accounts fa ON fa.id=t.financial_account_id
       WHERE t.transaction_type='PURCHASE_INVOICE'
         AND ($1='' OR t.company_id=$1::uuid)
-        AND (EXISTS (SELECT 1 FROM users u WHERE u.id=$2 AND u.is_system_admin AND u.status='ACTIVE')
+        AND (FALSE /* system admin bukan akses bisnis (Role V2) */
           OR EXISTS (
             SELECT 1 FROM workspace_memberships wm
              WHERE wm.user_id=$2 AND wm.workspace_id=t.workspace_id AND wm.status='ACTIVE'
@@ -97,7 +107,7 @@ clientTransactionRouter.post('/purchase-invoices', async (req, res) => {
   if (!['CASH','CREDIT'].includes(paymentType)) return res.status(400).json({ error: 'INVALID_PAYMENT_TYPE' });
   if (paymentType === 'CASH' && !financialAccountId) return res.status(400).json({ error: 'CASH_BANK_REQUIRED' });
   if (!rawLines.length) return res.status(400).json({ error: 'PURCHASE_LINES_REQUIRED' });
-  if (!(await canCreateTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (!(await canCreateFinanceTransaction(req.sessionUser!.id, companyId))) return res.status(403).json({ error: 'FORBIDDEN' });
 
   const company = await query<{ workspace_id: string }>(
     `SELECT workspace_id FROM companies WHERE id=$1 AND status='ACTIVE'`, [companyId],

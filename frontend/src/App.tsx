@@ -5,8 +5,13 @@ import {
   Building2,
   ChevronRight,
   CircleDollarSign,
+  ClipboardList,
   Database,
+  Eye,
+  Factory,
+  FileStack,
   Landmark,
+  LayoutDashboard,
   LogOut,
   MapPin,
   PackageSearch,
@@ -17,6 +22,7 @@ import {
   Store,
   Users,
   UsersRound,
+  WalletCards,
 } from 'lucide-react';
 import { api } from './api';
 import { MasterItemCenter } from './MasterItemCenter';
@@ -29,8 +35,6 @@ import { JournalCenter } from './JournalCenter';
 import { ClientItemCenter } from './ClientItemCenter';
 import { ClientPartnerCenter } from './ClientPartnerCenter';
 import { ClientPurchaseInvoice } from './ClientPurchaseInvoice';
-import { ClientCashIn } from './ClientCashIn';
-import { ClientCashOut } from './ClientCashOut';
 import { ClientItemUsage } from './ClientItemUsage';
 import { ClientStockTransfer } from './ClientStockTransfer';
 import { ClientStockOpname } from './ClientStockOpname';
@@ -38,40 +42,122 @@ import { ClientSalesImport } from './ClientSalesImport';
 import { ClientBomProduction } from './ClientBomProduction';
 import { ClientInventoryControl } from './ClientInventoryControl';
 import { CashBankCenter } from './CashBankCenter';
+import { AccountingCompanyPage } from './AccountingCompanyPage';
 
+type Membership = {
+  workspace_id: string;
+  workspace_name: string;
+  company_id: string | null;
+  company_name: string | null;
+  location_id: string | null;
+  location_name: string | null;
+  role_code: string;
+  role_name: string;
+  side: 'CLIENT' | 'AKUNTAKITA' | 'SYSTEM';
+};
 type Session = {
   user: { id: string; email: string; fullName: string; isSystemAdmin: boolean };
-  memberships: Array<{
-    workspace_id: string;
-    workspace_name: string;
-    company_id: string | null;
-    company_name: string | null;
-    location_id: string | null;
-    location_name: string | null;
-    role_code: string;
-    role_name: string;
-    side: 'CLIENT' | 'AKUNTAKITA' | 'SYSTEM';
-  }>;
+  memberships: Membership[];
 };
 
 type Summary = { workspaces: number; companies: number; locations: number; items: number; partners: number; transactions: number };
 type Workspace = { id: string; code: string; name: string; status: string };
 type Company = { id: string; workspace_id: string; code: string; name: string; status: string; workspace_name?: string };
 type Location = { id: string; company_id: string; code: string; name: string; location_type: string; status: string; company_name?: string };
-type Page = 'dashboard' | 'cash-bank' | 'organization' | 'items' | 'partners' | 'purchase' | 'sales' | 'cash-in' | 'cash-out' | 'item-usage' | 'stock-transfer' | 'stock-opname' | 'inventory-control' | 'bom-production' | 'finance' | 'coa-standard' | 'transactions' | 'control' | 'access' | 'settings';
+type Page =
+  | 'dashboard'
+  // Finance Control
+  | 'sales' | 'cash-bank' | 'purchase' | 'payables' | 'item-usage' | 'stock-transfer' | 'stock-opname' | 'inventory-control' | 'production' | 'items' | 'partners'
+  // Accounting Control
+  | 'control' | 'accounting-source' | 'coa-standard' | 'transactions' | 'bom' | 'periods' | 'finance' | 'items-master'
+  // Administrasi
+  | 'organization' | 'access' | 'settings';
 type OrganizationTab = 'workspace' | 'company' | 'location';
+
+/* ---- Role V2: pengelompokan role existing (tanpa role baru) ---- */
+const FINANCE_ROLES = ['CLIENT_FINANCE_MANAGER', 'CLIENT_FINANCE_STAFF'];
+const ACCOUNTING_ROLES = ['AK_SUPER_ADMIN', 'AK_ACCOUNTING_REVIEWER', 'AK_ACCOUNTING_STAFF'];
+const OWNER_ROLES = ['CLIENT_OWNER'];
+const OUTLET_ROLES = ['CLIENT_OUTLET_USER'];
+
+export type RoleFlags = {
+  isAccounting: boolean; isFinance: boolean; isOwner: boolean; isOutlet: boolean; isSystemAdmin: boolean;
+  financeArea: boolean; canVerify: boolean; canOverrideInventory: boolean; canPostJournal: boolean; canManageUsers: boolean;
+};
+
+export function roleFlags(session: Session): RoleFlags {
+  const codes = new Set(session.memberships.map(m => m.role_code));
+  const has = (list: string[]) => list.some(code => codes.has(code));
+  const isAccounting = has(ACCOUNTING_ROLES);
+  const isFinance = has(FINANCE_ROLES);
+  return {
+    isAccounting,
+    isFinance,
+    isOwner: has(OWNER_ROLES),
+    isOutlet: has(OUTLET_ROLES),
+    isSystemAdmin: Boolean(session.user.isSystemAdmin),
+    financeArea: isAccounting || isFinance,
+    canVerify: isAccounting || isFinance,
+    canOverrideInventory: isAccounting || codes.has('CLIENT_FINANCE_MANAGER'),
+    canPostJournal: codes.has('AK_SUPER_ADMIN') || codes.has('AK_ACCOUNTING_REVIEWER'),
+    canManageUsers: Boolean(session.user.isSystemAdmin) || codes.has('AK_SUPER_ADMIN'),
+  };
+}
+
+type NavItem = { page: Page; label: string; icon: React.ReactNode; allowed: (f: RoleFlags) => boolean };
+type NavGroup = { label: string; sub?: string; items: NavItem[] };
+
+const financeOrAcc = (f: RoleFlags) => f.financeArea;
+const operational = (f: RoleFlags) => f.financeArea || f.isOutlet;
+const accountingOnly = (f: RoleFlags) => f.isAccounting;
+
+const NAV: NavGroup[] = [
+  { label: 'Finance Control', items: [
+    { page: 'sales', label: 'Penjualan', icon: <Store size={18}/>, allowed: operational },
+    { page: 'cash-bank', label: 'Kas & Bank', icon: <Landmark size={18}/>, allowed: financeOrAcc },
+    { page: 'purchase', label: 'Pembelian', icon: <ReceiptText size={18}/>, allowed: financeOrAcc },
+    { page: 'payables', label: 'Hutang Supplier', icon: <WalletCards size={18}/>, allowed: financeOrAcc },
+  ] },
+  { label: 'Inventory', items: [
+    { page: 'item-usage', label: 'Pemakaian Barang', icon: <PackageSearch size={18}/>, allowed: operational },
+    { page: 'stock-transfer', label: 'Transfer Barang', icon: <Boxes size={18}/>, allowed: operational },
+    { page: 'stock-opname', label: 'Stock Opname', icon: <ClipboardList size={18}/>, allowed: operational },
+    { page: 'inventory-control', label: 'Kontrol & Kartu Stok', icon: <PackageSearch size={18}/>, allowed: financeOrAcc },
+    { page: 'production', label: 'Produksi', icon: <Factory size={18}/>, allowed: financeOrAcc },
+  ] },
+  { label: 'Master Operasional', items: [
+    { page: 'items', label: 'Barang / Item', icon: <Boxes size={18}/>, allowed: financeOrAcc },
+    { page: 'partners', label: 'Supplier & Relasi', icon: <UsersRound size={18}/>, allowed: financeOrAcc },
+  ] },
+  { label: 'Accounting Control', items: [
+    { page: 'control', label: 'Control Center', icon: <ShieldCheck size={18}/>, allowed: accountingOnly },
+    { page: 'accounting-source', label: 'Accounting Source', icon: <FileStack size={18}/>, allowed: accountingOnly },
+    { page: 'coa-standard', label: 'COA & Mapping', icon: <BookOpenCheck size={18}/>, allowed: accountingOnly },
+    { page: 'transactions', label: 'Jurnal / Engine', icon: <ReceiptText size={18}/>, allowed: accountingOnly },
+    { page: 'bom', label: 'BOM / Resep', icon: <Boxes size={18}/>, allowed: accountingOnly },
+    { page: 'periods', label: 'Periode & Closing', icon: <CircleDollarSign size={18}/>, allowed: accountingOnly },
+    { page: 'finance', label: 'Finance Master', icon: <Landmark size={18}/>, allowed: accountingOnly },
+    { page: 'items-master', label: 'Barang & Inventory', icon: <Database size={18}/>, allowed: accountingOnly },
+  ] },
+  { label: 'Administrasi', items: [
+    { page: 'access', label: 'User & Akses', icon: <Users size={18}/>, allowed: f => f.canManageUsers },
+    { page: 'organization', label: 'Organisasi', icon: <Building2 size={18}/>, allowed: f => f.isSystemAdmin || f.isAccounting },
+    { page: 'settings', label: 'Pengaturan', icon: <Settings2 size={18}/>, allowed: () => true },
+  ] },
+];
+
+const pageTitles: Record<Page, string> = {
+  dashboard: 'Dashboard', sales: 'Penjualan / Import POS', 'cash-bank': 'Kas & Bank', purchase: 'Pembelian / Invoice Supplier', payables: 'Hutang Supplier',
+  'item-usage': 'Pemakaian Barang', 'stock-transfer': 'Transfer Barang', 'stock-opname': 'Stock Opname', 'inventory-control': 'Kontrol Stok & Kartu Stok',
+  production: 'Produksi', items: 'Barang / Item', partners: 'Supplier & Relasi',
+  control: 'Accounting Control Center', 'accounting-source': 'Accounting Source', 'coa-standard': 'COA Standard & Mapping', transactions: 'Jurnal / Transaction Engine',
+  bom: 'BOM / Resep', periods: 'Periode & Closing', finance: 'Finance & Accounting Master', 'items-master': 'Barang & Inventory (Master)',
+  organization: 'Master Organisasi', access: 'User & Hak Akses', settings: 'Pengaturan',
+};
 
 const locationLabel: Record<string, string> = {
   HEAD_OFFICE: 'Head Office', OUTLET: 'Outlet', CENTRAL_KITCHEN: 'Central Kitchen', WAREHOUSE: 'Warehouse',
   PRODUCTION_KITCHEN: 'Production Kitchen', CLOUD_KITCHEN: 'Cloud Kitchen', BOOTH: 'Booth', OTHER: 'Lainnya',
-};
-
-const pageTitles: Record<Page, string> = {
-  dashboard: 'Dashboard', 'cash-bank': 'Kas & Bank', organization: 'Master Organisasi', items: 'Barang & Inventory', partners: 'Supplier & Relasi',
-  purchase: 'Invoice Pembelian', sales: 'Data Penjualan / Import POS', 'cash-in': 'Kas & Bank Masuk', 'cash-out': 'Kas & Bank Keluar', 'item-usage': 'Pemakaian Barang', 'stock-transfer': 'Transfer Barang', 'stock-opname': 'Stock Opname',
-  'inventory-control': 'Kontrol Stok & Kartu Stok', 'bom-production': 'BOM & Produksi STJ', finance: 'Finance & Accounting Master',
-  'coa-standard': 'COA Standard & Mapping', transactions: 'Jurnal / Transaction Engine', control: 'Accounting Control Center',
-  access: 'User & Hak Akses', settings: 'Pengaturan',
 };
 
 function Login({ onLogin }: { onLogin: () => void }) {
@@ -94,12 +180,12 @@ function Login({ onLogin }: { onLogin: () => void }) {
       <p>Platform multi-client, multi-company dan multi-outlet yang menjembatani Finance Client dengan Accounting Akuntakita tanpa input dua kali.</p>
       <div className="login-points"><span><ShieldCheck size={18}/> Finance Control</span><span><Database size={18}/> Satu sumber data</span><span><CircleDollarSign size={18}/> Accounting Engine</span></div>
     </section>
-    <section className="login-card-wrap"><form className="login-card" onSubmit={submit}>
+    <section className="login-card-wrap"><form className="login-card" onSubmit={submit} data-testid="login-form">
       <div className="logo-mark">A</div><div><h2>Masuk ke sistem</h2><p>Gunakan akun Finance Client atau Akuntakita.</p></div>
-      <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nama@perusahaan.com" autoFocus/></label>
-      <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"/></label>
-      {error && <div className="form-error">{error}</div>}
-      <button className="primary-button" disabled={loading}>{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.15 · Development</small>
+      <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nama@perusahaan.com" autoFocus data-testid="login-email"/></label>
+      <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" data-testid="login-password"/></label>
+      {error && <div className="form-error" data-testid="login-error">{error}</div>}
+      <button className="primary-button" disabled={loading} data-testid="login-submit">{loading ? 'Memeriksa...' : 'Masuk'}</button><small>Foundation v0.18 · Role V2</small>
     </form></section>
   </main>;
 }
@@ -112,6 +198,15 @@ function NavLabel({ children }: { children: React.ReactNode }) {
   return <span className="nav-group-label">{children}</span>;
 }
 
+function portalLabel(f: RoleFlags) {
+  if (f.isAccounting) return 'Accounting Control';
+  if (f.isFinance) return 'Finance Control';
+  if (f.isOutlet) return 'Outlet';
+  if (f.isOwner) return 'Owner · Read-only';
+  if (f.isSystemAdmin) return 'System Administration';
+  return 'Tanpa akses';
+}
+
 export function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -121,149 +216,103 @@ export function App() {
   useEffect(() => { void refreshSession(); }, []);
   useEffect(() => { if (session) api<Summary>('/api/foundation/summary').then(setSummary).catch(() => setSummary(null)); }, [session, active]);
 
-  async function logout() { await api('/api/auth/logout', { method: 'POST' }); setSession(null); }
+  async function logout() { await api('/api/auth/logout', { method: 'POST' }); setSession(null); setActive('dashboard'); }
 
-  const canAccounting = useMemo(() => Boolean(
-    session?.user.isSystemAdmin || session?.memberships.some(x => x.side === 'AKUNTAKITA')
-  ), [session]);
-
-  const clientOnly = useMemo(() => Boolean(
-    session && !session.user.isSystemAdmin && !session.memberships.some(x => x.side === 'AKUNTAKITA') && session.memberships.some(x => x.side === 'CLIENT')
-  ), [session]);
-
-  const portal = useMemo(() => {
-    if (session?.user.isSystemAdmin) return 'System Administration';
-    if (canAccounting) return 'Accounting Workspace';
-    if (clientOnly) return 'Finance Control Panel';
-    return 'Foundation Admin';
-  }, [session, canAccounting, clientOnly]);
-
-  const canManageUsers = useMemo(() => Boolean(
-    session?.user.isSystemAdmin || session?.memberships.some(x => x.role_code === 'AK_SUPER_ADMIN')
-  ), [session]);
-
-  const canVerifyTransactions = useMemo(() => Boolean(
-    session?.user.isSystemAdmin || session?.memberships.some(x => [
-      'AK_SUPER_ADMIN','AK_ACCOUNTING_REVIEWER','AK_ACCOUNTING_STAFF','CLIENT_FINANCE_MANAGER','CLIENT_FINANCE_STAFF',
-    ].includes(x.role_code))
-  ), [session]);
-
-  const canOverrideInventory = useMemo(() => Boolean(
-    session?.user.isSystemAdmin || session?.memberships.some(x => [
-      'AK_SUPER_ADMIN','AK_ACCOUNTING_REVIEWER','AK_ACCOUNTING_STAFF','CLIENT_FINANCE_MANAGER',
-    ].includes(x.role_code))
-  ), [session]);
-
-  const canPostJournal = useMemo(() => Boolean(
-    session?.user.isSystemAdmin || session?.memberships.some(x => ['AK_SUPER_ADMIN','AK_ACCOUNTING_REVIEWER'].includes(x.role_code))
-  ), [session]);
+  const flags = useMemo(() => (session ? roleFlags(session) : null), [session]);
+  const nav = useMemo(() => (flags ? NAV.map(g => ({ ...g, items: g.items.filter(i => i.allowed(flags)) })).filter(g => g.items.length) : []), [flags]);
+  const allowedPages = useMemo(() => new Set<Page>(['dashboard', ...nav.flatMap(g => g.items.map(i => i.page))]), [nav]);
 
   if (session === undefined) return <div className="loading-screen">Memuat sistem...</div>;
-  if (!session) return <Login onLogin={refreshSession}/>;
+  if (!session || !flags) return <Login onLogin={refreshSession}/>;
 
-  return <div className="app-shell">
+  const page: Page = allowedPages.has(active) ? active : 'dashboard';
+  const outletOnly = flags.isOutlet && !flags.financeArea;
+  const outletNames = [...new Set(session.memberships.filter(m => OUTLET_ROLES.includes(m.role_code)).map(m => m.location_name || 'Semua outlet'))];
+
+  return <div className="app-shell" data-testid="app-shell" data-portal={portalLabel(flags)}>
     <aside className="sidebar">
       <div className="sidebar-brand"><div className="logo-mark small">A</div><div><strong>AKUNTAKITA</strong><span>F&B Control</span></div></div>
-      <div className="portal-badge">{portal}</div>
-      <nav>
-        <button className={active === 'dashboard' ? 'active' : ''} onClick={() => setActive('dashboard')}><Store size={18}/> Dashboard</button>
-
-        {canAccounting && <>
-          <NavLabel>Finance Control</NavLabel>
-          <button className={active === 'purchase' ? 'active' : ''} onClick={() => setActive('purchase')}><ReceiptText size={18}/> Invoice Pembelian</button>
-          <button className={active === 'sales' ? 'active' : ''} onClick={() => setActive('sales')}><Store size={18}/> Data Penjualan</button>
-          <button className={active === 'cash-bank' ? 'active' : ''} onClick={() => setActive('cash-bank')} data-testid="nav-cash-bank"><Landmark size={18}/> Kas & Bank</button>
-          <button className={active === 'cash-in' ? 'active' : ''} onClick={() => setActive('cash-in')}><CircleDollarSign size={18}/> Kas / Bank Masuk</button>
-          <button className={active === 'cash-out' ? 'active' : ''} onClick={() => setActive('cash-out')}><CircleDollarSign size={18}/> Kas / Bank Keluar</button>
-          <button className={active === 'item-usage' ? 'active' : ''} onClick={() => setActive('item-usage')}><PackageSearch size={18}/> Pemakaian Barang</button>
-          <button className={active === 'stock-transfer' ? 'active' : ''} onClick={() => setActive('stock-transfer')}><Boxes size={18}/> Transfer Barang</button>
-          <button className={active === 'stock-opname' ? 'active' : ''} onClick={() => setActive('stock-opname')}><PackageSearch size={18}/> Stock Opname</button>
-          <button className={active === 'inventory-control' ? 'active' : ''} onClick={() => setActive('inventory-control')}><PackageSearch size={18}/> Kontrol & Kartu Stok</button>
-          <button className={active === 'bom-production' ? 'active' : ''} onClick={() => setActive('bom-production')}><Boxes size={18}/> BOM & Produksi STJ</button>
-
-          <NavLabel>Accounting</NavLabel>
-          <button className={active === 'control' ? 'active' : ''} onClick={() => setActive('control')}><ShieldCheck size={18}/> Control Center</button>
-          <button className={active === 'transactions' ? 'active' : ''} onClick={() => setActive('transactions')}><ReceiptText size={18}/> Jurnal / Engine</button>
-
-          <NavLabel>Master & Setup</NavLabel>
-          <button className={active === 'organization' ? 'active' : ''} onClick={() => setActive('organization')}><Building2 size={18}/> Organisasi</button>
-          <button className={active === 'items' ? 'active' : ''} onClick={() => setActive('items')}><Boxes size={18}/> Barang & Inventory</button>
-          <button className={active === 'finance' ? 'active' : ''} onClick={() => setActive('finance')}><Landmark size={18}/> Finance Master</button>
-          <button className={active === 'coa-standard' ? 'active' : ''} onClick={() => setActive('coa-standard')}><BookOpenCheck size={18}/> COA & Mapping</button>
-        </>}
-
-        {clientOnly && <>
-          <NavLabel>Finance Control</NavLabel>
-          <button className={active === 'purchase' ? 'active' : ''} onClick={() => setActive('purchase')}><ReceiptText size={18}/> Invoice Pembelian</button>
-          <button className={active === 'sales' ? 'active' : ''} onClick={() => setActive('sales')}><Store size={18}/> Data Penjualan</button>
-          <button className={active === 'cash-bank' ? 'active' : ''} onClick={() => setActive('cash-bank')} data-testid="nav-cash-bank"><Landmark size={18}/> Kas & Bank</button>
-          <button className={active === 'cash-in' ? 'active' : ''} onClick={() => setActive('cash-in')}><CircleDollarSign size={18}/> Kas / Bank Masuk</button>
-          <button className={active === 'cash-out' ? 'active' : ''} onClick={() => setActive('cash-out')}><CircleDollarSign size={18}/> Kas / Bank Keluar</button>
-          <button className={active === 'item-usage' ? 'active' : ''} onClick={() => setActive('item-usage')}><PackageSearch size={18}/> Pemakaian Barang</button>
-          <button className={active === 'stock-transfer' ? 'active' : ''} onClick={() => setActive('stock-transfer')}><Boxes size={18}/> Transfer Barang</button>
-          <button className={active === 'stock-opname' ? 'active' : ''} onClick={() => setActive('stock-opname')}><PackageSearch size={18}/> Stock Opname</button>
-          <button className={active === 'inventory-control' ? 'active' : ''} onClick={() => setActive('inventory-control')}><PackageSearch size={18}/> Kontrol & Kartu Stok</button>
-          <button className={active === 'bom-production' ? 'active' : ''} onClick={() => setActive('bom-production')}><Boxes size={18}/> BOM & Produksi STJ</button>
-
-          <NavLabel>Master</NavLabel>
-          <button className={active === 'items' ? 'active' : ''} onClick={() => setActive('items')}><Boxes size={18}/> Barang / Item</button>
-          <button className={active === 'partners' ? 'active' : ''} onClick={() => setActive('partners')}><UsersRound size={18}/> Supplier & Relasi</button>
-        </>}
-
-        <NavLabel>Administrasi</NavLabel>
-        {canManageUsers && <button className={active === 'access' ? 'active' : ''} onClick={() => setActive('access')}><Users size={18}/> User & Akses</button>}
-        <button className={active === 'settings' ? 'active' : ''} onClick={() => setActive('settings')}><Settings2 size={18}/> Pengaturan</button>
+      <div className="portal-badge" data-testid="portal-badge"><span>{portalLabel(flags)}</span>{outletOnly && <small>{outletNames.join(', ')}</small>}{flags.isSystemAdmin && (flags.financeArea || flags.isOwner || flags.isOutlet) && <small>+ System Admin</small>}</div>
+      <nav data-testid="sidebar-nav">
+        <button className={page === 'dashboard' ? 'active' : ''} onClick={() => setActive('dashboard')} data-testid="nav-dashboard"><LayoutDashboard size={18}/> Dashboard</button>
+        {nav.map(group => <div key={group.label} style={{ display: 'contents' }} data-testid={`nav-group-${group.label.toLowerCase().replace(/[^a-z]+/g, '-')}`}>
+          <NavLabel>{group.label}</NavLabel>
+          {group.items.map(item => <button key={item.page} className={page === item.page ? 'active' : ''} onClick={() => setActive(item.page)} data-testid={`nav-${item.page}`}>{item.icon} {item.label}</button>)}
+        </div>)}
       </nav>
-      <button className="logout-button" onClick={logout}><LogOut size={18}/> Keluar</button>
+      <button className="logout-button" onClick={logout} data-testid="logout-button"><LogOut size={18}/> Keluar</button>
     </aside>
 
     <section className="content-shell">
-      <header className="topbar"><div><span className="eyebrow">FOUNDATION v0.15</span><h2>{pageTitles[active]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
-      {active === 'dashboard' && <Dashboard summary={summary} setActive={setActive} clientMode={clientOnly}/>} 
-      {active === 'organization' && canAccounting && <OrganizationMaster/>}
-      {active === 'items' && (clientOnly ? <ClientItemCenter/> : <MasterItemCenter/>)}
-      {active === 'partners' && clientOnly && <ClientPartnerCenter/>}
-      {active === 'purchase' && (clientOnly || canAccounting) && <ClientPurchaseInvoice canVerify={canVerifyTransactions}/>}
-      {active === 'sales' && (clientOnly || canAccounting) && <ClientSalesImport canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}
-      {active === 'cash-bank' && (clientOnly || canAccounting) && <CashBankCenter canVerify={canVerifyTransactions} canAccounting={canAccounting}/>}
-      {active === 'cash-in' && (clientOnly || canAccounting) && <ClientCashIn canVerify={canVerifyTransactions}/>}
-      {active === 'cash-out' && (clientOnly || canAccounting) && <ClientCashOut canVerify={canVerifyTransactions}/>}
-      {active === 'item-usage' && (clientOnly || canAccounting) && <ClientItemUsage canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}
-      {active === 'stock-transfer' && (clientOnly || canAccounting) && <ClientStockTransfer canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}
-      {active === 'stock-opname' && (clientOnly || canAccounting) && <ClientStockOpname canVerify={canVerifyTransactions}/>}
-      {active === 'inventory-control' && (clientOnly || canAccounting) && <ClientInventoryControl/>}
-      {active === 'bom-production' && (clientOnly || canAccounting) && <ClientBomProduction canVerify={canVerifyTransactions} canOverride={canOverrideInventory}/>}
-      {active === 'finance' && canAccounting && <MasterFinanceCenter/>}
-      {active === 'coa-standard' && canAccounting && <StandardCoaCenter/>}
-      {active === 'transactions' && canAccounting && <TransactionForm canVerify={canVerifyTransactions}/>}
-      {active === 'control' && canAccounting && <JournalCenter canReview={canAccounting} canPost={canPostJournal}/>}
-      {active === 'access' && canManageUsers && <UserAccessCenter/>}
-      {active === 'settings' && <SettingsSecurity/>}
+      <header className="topbar"><div><span className="eyebrow">{portalLabel(flags).toUpperCase()}</span><h2 data-testid="page-title">{pageTitles[page]}</h2></div><div className="user-box"><div className="avatar">{session.user.fullName.slice(0,1).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><span>{session.user.email}</span></div></div></header>
+      {page === 'dashboard' && <Dashboard summary={summary} setActive={setActive} flags={flags} session={session}/>}
+      {page === 'sales' && <ClientSalesImport canVerify={flags.canVerify} canOverride={flags.canOverrideInventory}/>}
+      {page === 'cash-bank' && <CashBankCenter key="cash-bank" canVerify={flags.canVerify} canAccounting={flags.isAccounting}/>}
+      {page === 'payables' && <CashBankCenter key="payables" initialTab="payables" canVerify={flags.canVerify} canAccounting={flags.isAccounting}/>}
+      {page === 'purchase' && <ClientPurchaseInvoice canVerify={flags.canVerify}/>}
+      {page === 'item-usage' && <ClientItemUsage canVerify={flags.canVerify} canOverride={flags.canOverrideInventory}/>}
+      {page === 'stock-transfer' && <ClientStockTransfer canVerify={flags.canVerify} canOverride={flags.canOverrideInventory}/>}
+      {page === 'stock-opname' && <ClientStockOpname canVerify={flags.canVerify}/>}
+      {page === 'inventory-control' && <ClientInventoryControl/>}
+      {page === 'production' && <ClientBomProduction key="production" view="production" canManageBom={false} canVerify={flags.canVerify} canOverride={flags.canOverrideInventory}/>}
+      {page === 'items' && <ClientItemCenter/>}
+      {page === 'partners' && <ClientPartnerCenter/>}
+      {page === 'control' && <JournalCenter canReview={flags.isAccounting} canPost={flags.canPostJournal}/>}
+      {page === 'accounting-source' && <AccountingCompanyPage key="source" mode="source"/>}
+      {page === 'coa-standard' && <StandardCoaCenter/>}
+      {page === 'transactions' && <TransactionForm canVerify={flags.canVerify}/>}
+      {page === 'bom' && <ClientBomProduction key="bom" view="bom" canManageBom={flags.isAccounting} canVerify={flags.canVerify} canOverride={flags.canOverrideInventory}/>}
+      {page === 'periods' && <AccountingCompanyPage key="period" mode="period"/>}
+      {page === 'finance' && <MasterFinanceCenter/>}
+      {page === 'items-master' && <MasterItemCenter/>}
+      {page === 'organization' && <OrganizationMaster/>}
+      {page === 'access' && <UserAccessCenter/>}
+      {page === 'settings' && <SettingsSecurity/>}
     </section>
   </div>;
 }
 
-function Dashboard({ summary, setActive, clientMode }: { summary: Summary | null; setActive: (v: Page) => void; clientMode:boolean }) {
-  if (clientMode) return <div className="page-content">
-    <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL PANEL</span><h1>Catat kegiatan bisnis, bukan jurnal.</h1><p>Kategori, COA, mapping akun dan setup accounting dikelola Akuntakita. Tim client fokus pada administrasi operasional sehari-hari.</p></div><button className="primary-button compact" onClick={() => setActive('sales')}>Import Penjualan <ChevronRight size={17}/></button></section>
-    <div className="metrics-grid"><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/><Metric icon={<UsersRound/>} value={summary?.partners ?? 0} label="Supplier / Relasi"/></div>
-    <section className="section-card"><div className="section-title"><div><span className="eyebrow">ALUR KERJA CLIENT</span><h3>Portal client dibuat sederhana</h3></div></div><div className="foundation-list">
-      <div><b>01</b><span><strong>Finance Control</strong><small>Invoice Pembelian, Data Penjualan, Kas/Bank, Pemakaian, Transfer, Produksi dan Stock Opname adalah area kerja harian client. Tidak ada pilihan COA atau jurnal.</small></span></div>
-      <div><b>02</b><span><strong>BOM & Produksi</strong><small>Resep menu dan STJ menghubungkan operasional F&B dengan pemakaian bahan, hasil produksi dan HPP moving average.</small></span></div>
-      <div><b>03</b><span><strong>Kontrol Persediaan</strong><small>Kontrol Stok dan Kartu Stok membaca inventory ledger yang sama sehingga sumber mutasi dapat ditelusuri per dokumen.</small></span></div>
-      <div><b>04</b><span><strong>Accounting Otomatis</strong><small>Setelah Finance Verified, transaksi dan draft jurnal masuk Accounting Review tanpa client memilih akun.</small></span></div>
+function Dashboard({ summary, setActive, flags, session }: { summary: Summary | null; setActive: (v: Page) => void; flags: RoleFlags; session: Session }) {
+  if (flags.isAccounting) return <div className="page-content" data-testid="dashboard-accounting">
+    <section className="hero-panel"><div><span className="eyebrow">ACCOUNTING CONTROL · FULL BUSINESS ACCESS</span><h1>Operasional sederhana, accounting tetap terkendali.</h1><p>Finance Control menangkap transaksi bisnis. Accounting Akuntakita mengarahkan, mereview, memposting dan menutup periode tanpa input ulang.</p></div><button className="primary-button compact" onClick={() => setActive('control')} data-testid="dashboard-open-control">Buka Accounting Control <ChevronRight size={17}/></button></section>
+    <div className="metrics-grid"><Metric icon={<Users/>} value={summary?.workspaces ?? 0} label="Client / Workspace"/><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/></div>
+    <section className="section-card"><div className="section-title"><div><span className="eyebrow">STRUKTUR KERJA</span><h3>Finance Control + Accounting Control</h3></div></div><div className="foundation-list">
+      <div><b>01</b><span><strong>Finance Control</strong><small>Penjualan, Kas & Bank, Pembelian, Hutang Supplier, Inventory dan Produksi — Accounting dapat menjalankannya bila diperlukan.</small></span></div>
+      <div><b>02</b><span><strong>BOM / Resep</strong><small>Master BOM dimiliki Accounting: create, edit (versi baru) dan nonaktif. Finance hanya melihat dan menjalankan produksi.</small></span></div>
+      <div><b>03</b><span><strong>Accounting</strong><small>Control Center, Accounting Source, COA & Mapping, jurnal, review, posting dan closing periode.</small></span></div>
+      <div><b>04</b><span><strong>Satu company, satu pembukuan</strong><small>Multi outlet/location dalam satu company tetap satu pembukuan; akses mengikuti company & location assignment.</small></span></div>
     </div></section>
   </div>;
 
-  return <div className="page-content">
-    <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL + ACCOUNTING</span><h1>Operasional sederhana, accounting tetap terkendali.</h1><p>Finance Control menangkap transaksi bisnis. Accounting Akuntakita mengarahkan, mereview, memposting dan menutup periode tanpa input ulang.</p></div><button className="primary-button compact" onClick={() => setActive('control')}>Buka Accounting Control <ChevronRight size={17}/></button></section>
-    <div className="metrics-grid"><Metric icon={<Users/>} value={summary?.workspaces ?? 0} label="Client / Workspace"/><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/></div>
-    <section className="section-card"><div className="section-title"><div><span className="eyebrow">FOUNDATION v0.15</span><h3>Struktur kerja sistem</h3></div></div><div className="foundation-list">
-      <div><b>01</b><span><strong>Finance Control</strong><small>Pembelian, penjualan POS, kas/bank, produksi dan kontrol persediaan menjadi sumber transaksi bisnis.</small></span></div>
-      <div><b>02</b><span><strong>BOM & Inventory Ledger</strong><small>BOM menu/produksi, moving average, kartu stok dan kontrol stok menggunakan satu sumber mutasi persediaan.</small></span></div>
-      <div><b>03</b><span><strong>Accounting</strong><small>Control Center, arah akun, jurnal, review, posting dan closing dikelola Akuntakita.</small></span></div>
-      <div><b>04</b><span><strong>Client tetap sederhana</strong><small>Portal client hanya menampilkan bahasa bisnis, sementara mapping akun dan jurnal tetap dikelola Akuntakita.</small></span></div>
+  if (flags.isFinance) return <div className="page-content" data-testid="dashboard-finance">
+    <section className="hero-panel"><div><span className="eyebrow">FINANCE CONTROL</span><h1>Catat kegiatan bisnis, bukan jurnal.</h1><p>Kategori, COA, mapping akun, BOM/Resep dan setup accounting dikelola Akuntakita. Tim Finance fokus pada administrasi operasional sehari-hari.</p></div><button className="primary-button compact" onClick={() => setActive('sales')} data-testid="dashboard-open-sales">Import Penjualan <ChevronRight size={17}/></button></section>
+    <div className="metrics-grid"><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/><Metric icon={<UsersRound/>} value={summary?.partners ?? 0} label="Supplier / Relasi"/></div>
+    <section className="section-card"><div className="section-title"><div><span className="eyebrow">ALUR KERJA FINANCE</span><h3>Area kerja harian</h3></div></div><div className="foundation-list">
+      <div><b>01</b><span><strong>Penjualan & Kas/Bank</strong><small>Import POS, pembayaran, pindah uang, penerimaan lain dan rekonsiliasi dalam Kas & Bank terpadu.</small></span></div>
+      <div><b>02</b><span><strong>Pembelian & Hutang</strong><small>Invoice supplier dan pelunasan hutang (partial) tanpa memilih akun.</small></span></div>
+      <div><b>03</b><span><strong>Inventory & Produksi</strong><small>Pemakaian, transfer, stock opname, kartu stok dan produksi STJ berdasarkan BOM aktif dari Accounting.</small></span></div>
+      <div><b>04</b><span><strong>Accounting otomatis</strong><small>Setelah Finance Verified, transaksi masuk Accounting Review tanpa client memilih akun.</small></span></div>
     </div></section>
+  </div>;
+
+  if (flags.isOutlet) {
+    const outlets = session.memberships.filter(m => OUTLET_ROLES.includes(m.role_code));
+    return <div className="page-content" data-testid="dashboard-outlet">
+      <section className="hero-panel"><div><span className="eyebrow">OUTLET</span><h1>Operasional outlet</h1><p>Catat penjualan/POS, pemakaian barang, transfer dan stock opname untuk outlet yang ditugaskan kepada Anda.</p></div><button className="primary-button compact" onClick={() => setActive('sales')} data-testid="dashboard-open-sales">Import Penjualan <ChevronRight size={17}/></button></section>
+      <section className="section-card"><div className="section-title"><div><span className="eyebrow">ASSIGNMENT</span><h3>Outlet yang ditugaskan</h3></div></div><div className="role-scope-list" data-testid="outlet-assignment-list">
+        {outlets.map((m, index) => <div key={`${m.location_id}-${index}`}><strong>{m.location_name || 'Semua outlet'}</strong><span>{m.company_name || m.workspace_name}</span></div>)}
+      </div></section>
+    </div>;
+  }
+
+  if (flags.isOwner) return <div className="page-content" data-testid="dashboard-owner">
+    <section className="hero-panel"><div><span className="eyebrow">OWNER · READ-ONLY</span><h1>Ringkasan bisnis</h1><p>Area Owner bersifat hanya-lihat. Dashboard Owner lengkap (penjualan, kas, laba) disiapkan pada fase berikutnya.</p></div><span className="readonly-pill" data-testid="owner-readonly-badge"><Eye size={15}/> Hanya lihat</span></section>
+    <div className="metrics-grid"><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Outlet / Location"/><Metric icon={<PackageSearch/>} value={summary?.items ?? 0} label="Item"/><Metric icon={<ReceiptText/>} value={summary?.transactions ?? 0} label="Transaksi"/></div>
+  </div>;
+
+  return <div className="page-content" data-testid="dashboard-sysadmin">
+    <section className="hero-panel"><div><span className="eyebrow">SYSTEM ADMINISTRATION</span><h1>Administrasi teknis sistem</h1><p>System Admin mengelola user, hak akses, organisasi dan pengaturan. Akses bisnis (Finance/Accounting) diberikan lewat membership role di User & Akses.</p></div>{flags.canManageUsers && <button className="primary-button compact" onClick={() => setActive('access')} data-testid="dashboard-open-access">Kelola User & Akses <ChevronRight size={17}/></button>}</section>
+    <div className="metrics-grid"><Metric icon={<Users/>} value={summary?.workspaces ?? 0} label="Client / Workspace"/><Metric icon={<Building2/>} value={summary?.companies ?? 0} label="Company"/><Metric icon={<MapPin/>} value={summary?.locations ?? 0} label="Location"/><Metric icon={<ShieldCheck/>} value={session.memberships.length} label="Membership Anda"/></div>
   </div>;
 }
 

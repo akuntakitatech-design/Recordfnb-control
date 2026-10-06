@@ -7,17 +7,20 @@ import {
 } from './cashBankShared';
 import { CashBankEntryModal, type EntryPreset } from './CashBankEntryModal';
 import { ControlPanel, PayablesPanel, PeriodPanel, ReconciliationPanel, TransactionDetailModal, VerificationPanel } from './CashBankPanels';
+import { ClientCashIn } from './ClientCashIn';
+import { ClientCashOut } from './ClientCashOut';
 
-type Tab = 'ledger' | 'payables' | 'verification' | 'control' | 'reconciliation' | 'period';
+export type CashBankTab = 'ledger' | 'payables' | 'verification' | 'control' | 'reconciliation' | 'period' | 'cash-in' | 'cash-out';
+type Tab = CashBankTab;
 
-export function CashBankCenter({ canVerify, canAccounting }: { canVerify: boolean; canAccounting: boolean }) {
+export function CashBankCenter({ canVerify, canAccounting, initialTab = 'ledger' }: { canVerify: boolean; canAccounting: boolean; initialTab?: Tab }) {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [companyId, setCompanyId] = useState('');
   const [accounts, setAccounts] = useState<CashAccount[]>([]);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [ledger, setLedger] = useState<Ledger | null>(null);
-  const [tab, setTab] = useState<Tab>('ledger');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [accountId, setAccountId] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -69,6 +72,8 @@ export function CashBankCenter({ canVerify, canAccounting }: { canVerify: boolea
   const tabs: Array<[Tab, string, boolean]> = [
     ['ledger', 'Mutasi', true], ['payables', 'Hutang Supplier', true], ['verification', `Verifikasi Finance${draftCount ? ` (${draftCount})` : ''}`, true],
     ['control', 'Accounting Control', canAccounting], ['reconciliation', 'Rekonsiliasi', true], ['period', 'Periode', canAccounting],
+    // Menu lama Kas/Bank Masuk & Keluar dilipat ke sini (engine & data tetap sama).
+    ['cash-in', 'Penerimaan Lain', true], ['cash-out', 'Pengeluaran Rinci', true],
   ];
 
   return <div className="page-content cash-bank-page" data-testid="cash-bank-page">
@@ -137,6 +142,9 @@ export function CashBankCenter({ canVerify, canAccounting }: { canVerify: boolea
       {company && tab === 'reconciliation' && <ReconciliationPanel companyId={companyId} accounts={accounts} canVerify={canVerify} notify={notify} refreshKey={refreshKey} onChanged={refresh}/>}
       {company && tab === 'period' && canAccounting && <PeriodPanel companyId={companyId} canAccounting={canAccounting} notify={notify} refreshKey={refreshKey}/>}
     </section>
+
+    {tab === 'cash-in' && <div className="cb-embedded" data-testid="cb-embedded-cash-in"><ClientCashIn canVerify={canVerify}/></div>}
+    {tab === 'cash-out' && <div className="cb-embedded" data-testid="cb-embedded-cash-out"><ClientCashOut canVerify={canVerify}/></div>}
 
     {entry && company && <CashBankEntryModal key={JSON.stringify(entry)} companyId={companyId} workspaceId={company.workspace_id} locations={companyLocations} accounts={accounts} canVerify={canVerify} preset={entry}
       onClose={() => setEntry(null)} onSaved={message => { setEntry(null); notify('ok', message); refresh(); }}/>}
