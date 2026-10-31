@@ -3,8 +3,8 @@
 Aplikasi keuangan untuk **satu badan hukum yayasan** dengan banyak jenjang dan cabang.
 Implementasi mengikuti **Blueprint Keuangan Yayasan Multiunit V1.2**.
 
-Status saat ini: **Foundation (FD-01 s.d. FD-05) + BILL-01** (siswa, tarif, tagihan, piutang).
-Modul penerimaan, pengeluaran, dan akuntansi menyusul pada fase berikutnya.
+Status saat ini: **Foundation (FD-01 s.d. FD-05) + BILL-01 + FC-01 (penerimaan & kas/bank)**.
+Modul pengeluaran, pengakuan pendapatan, dan akuntansi menyusul pada fase berikutnya.
 
 ## 1. Ruang lingkup Foundation
 
@@ -19,9 +19,11 @@ Modul penerimaan, pengeluaran, dan akuntansi menyusul pada fase berikutnya.
 | Siswa & penempatan | Master siswa per yayasan, riwayat penempatan unit/tahun ajaran (pernah pindah unit tetap tercatat) |
 | Tarif | Jenis biaya (+akun pendapatan, mode pengakuan), tarif per unit/tahun ajaran dengan masa berlaku, frekuensi, dan jumlah angsuran |
 | Tagihan & piutang | Generate tagihan per unit + periode (idempoten), rincian per jenis biaya, angsuran, daftar tagihan, pembatalan (VOID), piutang + aging |
+| Penerimaan | Kwitansi bernomor per tanggal + unit, metode bayar, rekening penerimaan sesuai mapping unit, alokasi ke satu/beberapa tagihan, sisa sebagai uang belum dialokasikan, pembatalan (VOID) yang memulihkan tagihan, idempotency key |
+| Kas & bank | Saldo per rekening dari mutasi (masuk/keluar), daftar mutasi dengan filter rekening & tanggal, total masuk/keluar, pembatasan rekening per scope unit |
 
-**Belum termasuk (fase berikut):** penerimaan & alokasi pembayaran (FC-01), pengeluaran,
-jurnal umum & tutup buku (ACC-01), laporan yayasan (RPT-01), integrasi bank.
+**Belum termasuk (fase berikut):** pengeluaran & pembayaran vendor, pengakuan pendapatan
+(`DEFERRED`), jurnal umum & tutup buku (ACC-01), laporan yayasan (RPT-01), integrasi bank.
 
 ## 2. Tech stack
 
@@ -40,6 +42,8 @@ jurnal umum & tutup buku (ACC-01), laporan yayasan (RPT-01), integrasi bank.
 backend/
   db/migrations/001_foundation.sql        # skema organisasi, unit, rekening, akses, audit
   db/migrations/002_seed_foundation.sql   # seed contoh: Yayasan, TK/SD, TK-PANAM (Draft)
+  db/migrations/003_billing.sql           # siswa, enrollment, tarif, tagihan, angsuran
+  db/migrations/004_receipts.sql          # penerimaan, alokasi, mutasi kas & bank
   src/index.ts                            # migrasi -> bootstrap admin -> listen
   src/db.ts · src/http.ts                 # pool & helper validasi
   src/auth.ts · src/permissions.ts        # sesi, 8 role, permission, unit scope
@@ -51,14 +55,18 @@ backend/
   src/routes/feeRoutes.ts                 # jenis biaya + tarif per unit
   src/routes/billingRoutes.ts             # billing run, invoice, void
   src/routes/receivableRoutes.ts          # piutang + aging
+  src/routes/receiptRoutes.ts             # penerimaan, alokasi, pembatalan
+  src/routes/cashBankRoutes.ts            # saldo & mutasi kas/bank
   src/routes/dashboardRoutes.ts
 frontend/
   src/App.tsx                             # shell + menu per permission
   src/pages/Dashboard.tsx · Organization.tsx · Units.tsx
   src/pages/BankAccounts.tsx · Readiness.tsx · Users.tsx · Audit.tsx
   src/pages/Students.tsx · Fees.tsx · Billing.tsx · Receivables.tsx
+  src/pages/Receipts.tsx · CashBank.tsx
 tests/foundation_uat.py                   # UAT T01–T10 + T19 (blueprint)
 tests/billing_uat.py                      # UAT BILL-01 (tagihan & piutang)
+tests/receipt_uat.py                      # UAT FC-01 (penerimaan & kas/bank)
 ```
 
 ## 4. Menjalankan lokal
@@ -121,10 +129,16 @@ seluruh unit. Role cabang dibatasi `user_unit_access` dan **dicek di server** pa
 | GET | `/api/v1/invoices`, `/api/v1/invoices/{id}` | Daftar & rincian tagihan |
 | POST | `/api/v1/invoices/{id}/void` | Batalkan tagihan (alasan wajib, tanpa hapus data) |
 | GET | `/api/v1/receivables` | Piutang + aging per unit |
+| GET/POST | `/api/v1/receipts` | Daftar (filter unit/tanggal/status/cari) & catat penerimaan + alokasi |
+| GET | `/api/v1/receipts/{id}` | Rincian penerimaan + alokasi per tagihan |
+| POST | `/api/v1/receipts/{id}/void` | Batalkan penerimaan (tagihan kembali, mutasi keluar tercatat) |
+| GET | `/api/v1/cash-bank/balances` | Saldo per rekening (masuk − keluar) + unit penerima |
+| GET | `/api/v1/cash-bank/mutations` | Mutasi kas & bank + total masuk/keluar terfilter |
 
 Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 `UNIT_FINANCE_NOT_READY`, `BANK_ACCOUNT_NOT_ALLOWED`, `BANK_ACCOUNT_DEDICATED_CONFLICT`,
-`PERMISSION_DENIED`, dan seterusnya.
+`BANK_ACCOUNT_NOT_ASSIGNED_TO_UNIT`, `ALLOCATION_EXCEEDS_OUTSTANDING`,
+`ALLOCATION_EXCEEDS_RECEIPT`, `RECEIPT_ALREADY_VOID`, `PERMISSION_DENIED`, dan seterusnya.
 
 ## 7. Aturan validasi yang sudah diterapkan
 
@@ -140,6 +154,7 @@ Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 - **ACC-01** mapping akun piutang & pendapatan wajib untuk status `READY`.
 - **Audit** perubahan konfigurasi mencatat before/after, aktor, alasan, IP.
 - **BILL-01** tagihan hanya untuk unit `ACTIVE` + `finance_status=READY`; duplikat unit+tahun+periode ditolak; pembatalan hanya bila belum ada pembayaran; nilai uang dihitung dalam sen agar pembagian angsuran deterministik.
+- **FC-01** penerimaan hanya ke rekening `ACTIVE` + terverifikasi **dan** dipetakan ke unit pada tanggal transaksi; alokasi tidak boleh melebihi sisa tagihan (`ALLOCATION_EXCEEDS_OUTSTANDING`) maupun nilai penerimaan; `idempotencyKey` mencegah posting ganda; pembatalan tidak menghapus data (status `VOID` + mutasi keluar), tagihan/angsuran dihitung ulang dari alokasi yang masih `POSTED`; semua nilai diproses dalam sen.
 
 ## 8. Pengujian
 
@@ -159,9 +174,17 @@ BASE=http://127.0.0.1:4100 \
 ADMIN_EMAIL=admin@sekolah.test \
 ADMIN_PASSWORD='...' \
 uv run --with httpx python tests/billing_uat.py
+
+# UAT FC-01 (penerimaan, alokasi, kas & bank)
+BASE=http://127.0.0.1:4100 \
+ADMIN_EMAIL=admin@sekolah.test \
+ADMIN_PASSWORD='...' \
+uv run --with httpx python tests/receipt_uat.py
 ```
 
-Hasil terakhir: Foundation **20/20 lulus**, BILL-01 **23/23 lulus**.
+Hasil terakhir: Foundation **21/21 lulus**, BILL-01 **24/24 lulus**, FC-01 **38/38 lulus**.
+Semua suite bersifat rerun-safe (kode unik per `RUN_SUFFIX`, periode unik) dan hanya untuk DB
+lokal/staging.
 
 ## 9. Roadmap sesuai blueprint
 
@@ -170,6 +193,6 @@ Hasil terakhir: Foundation **20/20 lulus**, BILL-01 **23/23 lulus**.
 | FD-01…FD-05 | ✅ Foundation (dokumen ini) |
 | FD-06 | Hardening, seed master final, dokumentasi API, regresi |
 | BILL-01 | ✅ Siswa, enrollment, tarif, tagihan, cicilan, piutang |
-| FC-01 | Penerimaan, alokasi pembayaran, pengeluaran, kas & bank |
+| FC-01 | ✅ Penerimaan & alokasi, kas & bank — pengeluaran menyusul |
 | ACC-01 | Jurnal umum, rekonsiliasi, tutup buku |
 | RPT-01 | Dashboard cabang/jenjang/yayasan + drill-down |

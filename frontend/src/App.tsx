@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  Building2, FileText, Landmark, LayoutDashboard, LogOut, PieChart, Receipt, ScrollText,
-  ShieldCheck, Users, UsersRound, WalletCards,
+  Banknote, Building2, FileText, Landmark, LayoutDashboard, LogOut, PieChart, Receipt, ScrollText,
+  ShieldCheck, Users, UsersRound, Wallet, WalletCards,
 } from 'lucide-react';
 import { api } from './api';
 import { ROLE_LABEL, type LegalEntity, type Permission, type Session } from './types';
@@ -18,10 +18,12 @@ import { Students } from './pages/Students';
 import { Fees } from './pages/Fees';
 import { Billing } from './pages/Billing';
 import { Receivables } from './pages/Receivables';
+import { Receipts } from './pages/Receipts';
+import { CashBank } from './pages/CashBank';
 
 type Page =
   | 'dashboard' | 'organization' | 'units' | 'banks' | 'readiness'
-  | 'students' | 'fees' | 'billing' | 'receivables'
+  | 'students' | 'fees' | 'billing' | 'receivables' | 'receipts' | 'cashbank'
   | 'users' | 'audit';
 
 type NavItem = { page: Page; label: string; icon: ReactNode; permission: Permission | null };
@@ -45,6 +47,13 @@ const NAV: NavGroup[] = [
       { page: 'fees', label: 'Tarif', icon: <Receipt size={18} />, permission: 'fee.view' },
       { page: 'billing', label: 'Tagihan', icon: <FileText size={18} />, permission: 'billing.view' },
       { page: 'receivables', label: 'Piutang', icon: <PieChart size={18} />, permission: 'receivable.view' },
+      { page: 'receipts', label: 'Penerimaan', icon: <Banknote size={18} />, permission: 'receipt.view' },
+    ],
+  },
+  {
+    label: 'Kas & Bank',
+    items: [
+      { page: 'cashbank', label: 'Saldo & Mutasi', icon: <Wallet size={18} />, permission: 'cashbank.view' },
     ],
   },
   {
@@ -66,6 +75,8 @@ const PAGE_TITLES: Record<Page, string> = {
   fees: 'Jenis Biaya & Tarif',
   billing: 'Tagihan Siswa',
   receivables: 'Piutang & Aging',
+  receipts: 'Penerimaan Pembayaran',
+  cashbank: 'Kas & Bank',
   users: 'Pengguna & Akses',
   audit: 'Audit Trail',
 };
@@ -184,6 +195,8 @@ export function App() {
           {current === 'fees' && <Fees session={session} />}
           {current === 'billing' && <Billing session={session} />}
           {current === 'receivables' && <Receivables session={session} />}
+          {current === 'receipts' && <Receipts session={session} />}
+          {current === 'cashbank' && <CashBank session={session} />}
           {current === 'users' && <UsersPage session={session} />}
           {current === 'audit' && <Audit />}
         </main>

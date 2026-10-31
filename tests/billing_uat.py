@@ -117,7 +117,12 @@ def main() -> int:
     preview = admin.post("/api/v1/billing-runs/preview", json=payload)
     body = preview.json()
     check("pratinjau tagihan", preview.status_code == 200 and body.get("studentCount", 0) >= 1, body.get("studentCount"))
-    check("nominal per siswa benar", body.get("totalPerStudent") == 500000, body.get("totalPerStudent"))
+    expected_total = sum(s.get("amount", 0) for s in body.get("schemes", []))
+    check("nominal per siswa = jumlah tarif aktif",
+          expected_total > 0 and body.get("totalPerStudent") == expected_total,
+          (body.get("totalPerStudent"), expected_total))
+    check("tarif yang baru dibuat masuk perhitungan",
+          any(s.get("feeTypeId") == fee_type_id for s in body.get("schemes", [])), len(body.get("schemes", [])))
 
     # Unit belum siap
     not_ready = next((u for u in hierarchy["units"] if u["finance_status"] != "READY" and u["id"] != unit_id), None)
@@ -137,12 +142,17 @@ def main() -> int:
         return summary()
 
     detail = admin.get(f"/api/v1/invoices/{invoice['id']}").json()
-    check("rincian invoice & angsuran", len(detail.get("lines", [])) == 1 and len(detail.get("installments", [])) == 1,
-          (len(detail.get("lines", [])), len(detail.get("installments", []))))
+    line_total = sum(float(line["amount"]) for line in detail.get("lines", []))
+    check("rincian invoice & angsuran",
+          len(detail.get("lines", [])) == len(body.get("schemes", []))
+          and line_total == float(detail["total_amount"])
+          and len(detail.get("installments", [])) == body.get("installmentCount"),
+          (len(detail.get("lines", [])), len(detail.get("installments", [])), line_total))
 
     receivables = admin.get("/api/v1/receivables").json()
     outstanding = next((row for row in receivables["items"] if row["id"] == invoice["id"]), None)
-    check("piutang tercatat", outstanding is not None and outstanding["outstanding"] == 500000, outstanding["outstanding"] if outstanding else None)
+    check("piutang tercatat", outstanding is not None and float(outstanding["outstanding"]) == float(expected_total),
+          outstanding["outstanding"] if outstanding else None)
 
     voided = admin.post(f"/api/v1/invoices/{invoice['id']}/void", json={"reason": "UAT void tagihan"})
     check("void invoice", voided.status_code == 200, voided.text[:80])

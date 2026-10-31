@@ -97,9 +97,17 @@ def main() -> int:
     r = admin.post(f"/api/v1/organization/units/{incomplete_unit}/activate")
     check("T06 aktivasi tanpa lokasi ditolak", r.status_code == 400 and r.json().get("error") == "UNIT_ACTIVATION_INCOMPLETE", r.text[:90])
 
-    # T07 — MIXED tanpa dua jenis rekening
+    # T07 — MIXED tanpa dua jenis rekening (pakai unit baru agar tidak bergantung data run sebelumnya)
+    fresh_unit = admin.post("/api/v1/organization/units", json={
+        "unitCode": f"RD{SUFFIX}", "unitName": "Unit Cek Kesiapan",
+        "educationLevelId": levels["TK"], "locationId": location,
+        "defaultAcademicYearId": academic_year, "effectiveStart": "2026-07-01",
+    })
+    check("unit baru untuk cek kesiapan", fresh_unit.status_code == 201, fresh_unit.text[:90])
+    if fresh_unit.status_code != 201:
+        return summary()
     tk_unit = next(unit["id"] for unit in hierarchy["units"] if unit["unit_code"] == "TK-PANAM")
-    body = admin.get(f"/api/v1/organization/units/{tk_unit}/readiness").json()
+    body = admin.get(f"/api/v1/organization/units/{fresh_unit.json()['id']}/readiness").json()
     fields = [item["field"] for item in body.get("checks", [])]
     check("T07 MIXED tanpa rekening => Not Ready",
           body.get("status") == "NOT_CONFIGURED" and "central_bank_account" in fields and "dedicated_bank_account" in fields,

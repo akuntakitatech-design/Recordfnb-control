@@ -21,6 +21,10 @@ export type Permission =
   | 'billing.generate'
   | 'invoice.void'
   | 'receivable.view'
+  | 'receipt.view'
+  | 'receipt.create'
+  | 'receipt.void'
+  | 'cashbank.view'
   | 'user.manage'
   | 'audit.view'
   | 'report.view'
@@ -41,28 +45,41 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
   PIMPINAN: [
     'unit.view', 'bank.view', 'report.view', 'audit.view', 'approval.act',
     'student.view', 'fee.view', 'billing.view', 'receivable.view',
+    'receipt.view', 'cashbank.view',
   ],
   ADMIN_YAYASAN: [
     'entity.manage', 'unit.view', 'unit.create', 'unit.edit', 'unit.activate', 'unit.deactivate',
     'unit.finance', 'bank.view', 'bank.manage', 'bank.assign', 'user.manage', 'audit.view', 'report.view',
     'student.view', 'student.manage', 'fee.view', 'fee.manage', 'billing.view', 'billing.generate',
-    'invoice.void', 'receivable.view',
+    'invoice.void', 'receivable.view', 'receipt.view', 'receipt.create', 'receipt.void', 'cashbank.view',
   ],
   FINANCE_PUSAT: [
     'unit.view', 'bank.view', 'bank.manage', 'bank.assign', 'report.view',
     'student.view', 'fee.view', 'billing.view', 'billing.generate', 'invoice.void', 'receivable.view',
+    'receipt.view', 'receipt.create', 'receipt.void', 'cashbank.view',
   ],
   ACCOUNTING_PUSAT: [
     'unit.view', 'unit.finance', 'bank.view', 'report.view', 'audit.view',
     'student.view', 'fee.view', 'fee.manage', 'billing.view', 'invoice.void', 'receivable.view',
+    'receipt.view', 'receipt.void', 'cashbank.view',
   ],
-  KEPALA_JENJANG: ['unit.view', 'report.view', 'approval.act', 'student.view', 'fee.view', 'billing.view', 'receivable.view'],
-  KEPALA_CABANG: ['unit.view', 'report.view', 'approval.act', 'student.view', 'fee.view', 'billing.view', 'receivable.view'],
+  KEPALA_JENJANG: [
+    'unit.view', 'report.view', 'approval.act', 'student.view', 'fee.view', 'billing.view', 'receivable.view',
+    'receipt.view', 'cashbank.view',
+  ],
+  KEPALA_CABANG: [
+    'unit.view', 'report.view', 'approval.act', 'student.view', 'fee.view', 'billing.view', 'receivable.view',
+    'receipt.view', 'cashbank.view',
+  ],
   BENDAHARA_CABANG: [
     'unit.view', 'report.view', 'student.view', 'student.manage', 'fee.view',
     'billing.view', 'billing.generate', 'receivable.view',
+    'receipt.view', 'receipt.create', 'cashbank.view',
   ],
-  AUDITOR: ['unit.view', 'bank.view', 'audit.view', 'report.view', 'student.view', 'fee.view', 'billing.view', 'receivable.view'],
+  AUDITOR: [
+    'unit.view', 'bank.view', 'audit.view', 'report.view', 'student.view', 'fee.view', 'billing.view',
+    'receivable.view', 'receipt.view', 'cashbank.view',
+  ],
 };
 
 const GLOBAL_ROLES = new Set<UserRole>([

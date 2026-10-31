@@ -29,6 +29,10 @@ export type Permission =
   | 'student.view' | 'student.manage'
   | 'fee.view' | 'fee.manage'
   | 'billing.view' | 'billing.generate' | 'invoice.void'
+  | 'receipt.view'
+  | 'receipt.create'
+  | 'receipt.void'
+  | 'cashbank.view'
   | 'receivable.view';
 
 export type SessionUser = {
@@ -364,4 +368,83 @@ export type ReceivableSummary = {
   aging: { CURRENT: number; D1_30: number; D31_60: number; D61_PLUS: number };
   byUnit: { unit_id: string; unit_code: string; unit_name: string; outstanding: number; invoices: number }[];
   items: ReceivableItem[];
+};
+
+export type ReceiptSummary = {
+  today: string;
+  totalOutstanding: number;
+  invoiceCount: number;
+  aging: { CURRENT: number; D1_30: number; D31_60: number; D61_PLUS: number };
+  byUnit: { unit_id: string; unit_code: string; unit_name: string; outstanding: number; invoices: number }[];
+  items: ReceivableItem[];
+};
+
+export type ReceiptRow = {
+  id: string;
+  receipt_number: string;
+  receipt_date: string;
+  method: 'CASH' | 'TRANSFER' | 'QRIS' | 'OTHER';
+  reference_number: string | null;
+  payer_name: string | null;
+  total_amount: string;
+  allocated_amount: string;
+  unallocated_amount: string;
+  status: 'POSTED' | 'VOID';
+  unit_code: string;
+  unit_name: string;
+  bank_name: string;
+  allocation_count: number;
+};
+
+export type ReceiptAllocation = {
+  id: string;
+  amount: string;
+  unit_id: string;
+  invoice_id: string;
+  student_id: string;
+  invoice_number: string;
+  period_label: string;
+  invoice_status: string;
+  total_amount: string;
+  paid_amount: string;
+  full_name: string;
+  nis: string;
+  unit_code: string;
+  unit_name: string;
+};
+
+export type ReceiptDetail = ReceiptRow & {
+  notes: string | null;
+  void_reason: string | null;
+  created_by_name: string | null;
+  allocations: ReceiptAllocation[];
+};
+
+export type BankBalance = {
+  id: string;
+  bank_name: string;
+  account_number: string;
+  account_holder: string;
+  account_usage: 'CENTRAL' | 'DEDICATED';
+  currency: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  verified_at: string | null;
+  total_in: number;
+  total_out: number;
+  balance: number;
+  receipt_unit_ids: string[];
+};
+
+export type BankMutation = {
+  id: string;
+  mutation_date: string;
+  direction: 'IN' | 'OUT';
+  amount: string;
+  source_type: string;
+  source_id: string | null;
+  description: string | null;
+  bank_name: string;
+  account_number: string;
+  unit_code: string | null;
+  unit_name: string | null;
 };
