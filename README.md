@@ -1,176 +1,252 @@
-# Akuntakita F&B Control (Recordfnb)
+# School Finance ERP — Keuangan Yayasan Multiunit
 
-[![frontend record.akuntakita.com](https://img.shields.io/badge/frontend-record.akuntakita.com-1f6feb?style=flat-square&logo=globe&logoColor=white)](https://record.akuntakita.com) [![api record.akuntakita.com/api](https://img.shields.io/badge/api-record.akuntakita.com%2Fapi-2ea043?style=flat-square&logo=serverless&logoColor=white)](https://record.akuntakita.com/api) ![media Cloudflare R2](https://img.shields.io/badge/media-Cloudflare%20R2-f38020?style=flat-square&logo=cloudflare&logoColor=white) ![workflow PR only · emergent-agent](https://img.shields.io/badge/workflow-PR%20only%20%C2%B7%20emergent--agent-8957e5?style=flat-square&logo=github&logoColor=white)
+Aplikasi keuangan untuk **satu badan hukum yayasan** dengan banyak jenjang dan cabang.
+Implementasi mengikuti **Blueprint Keuangan Yayasan Multiunit V1.2**.
 
-![Node.js 22](https://img.shields.io/badge/Node.js-22-339933?style=flat-square&logo=nodedotjs&logoColor=white) ![Express 4](https://img.shields.io/badge/Express-4-000000?style=flat-square&logo=express&logoColor=white) ![TypeScript 5.7](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white) ![MariaDB 11](https://img.shields.io/badge/MariaDB-11-003545?style=flat-square&logo=mariadb&logoColor=white) ![React 19](https://img.shields.io/badge/React-19-20232a?style=flat-square&logo=react&logoColor=61dafb) ![Vite 6](https://img.shields.io/badge/Vite-6-646cff?style=flat-square&logo=vite&logoColor=white) ![Nginx 1.27](https://img.shields.io/badge/Nginx-1.27-009639?style=flat-square&logo=nginx&logoColor=white) ![Docker Coolify](https://img.shields.io/badge/Docker-Coolify-2496ed?style=flat-square&logo=docker&logoColor=white)
+Status saat ini: **seluruh fase blueprint selesai** — Foundation (FD-01…FD-06), BILL-01, FC-01,
+ACC-01, dan RPT-01. Sisa fitur di luar fase awal: transfer antar rekening, anggaran & unit cost,
+pengakuan pendapatan `DEFERRED`.
 
+## 1. Ruang lingkup Foundation
 
-## 1. Overview Project
+| Area | Isi |
+|---|---|
+| Organisasi | Badan hukum, jenjang, kelompok sekolah, sekolah resmi (NPSN), lokasi, tahun ajaran |
+| Unit / cabang | Draft → aktif → nonaktif, kode unik per yayasan, jenjang & sekolah resmi terhubung |
+| Rekening campuran | Rekening fisik `CENTRAL` / `DEDICATED`, mapping per unit (`CENTRAL_SHARED` / `UNIT_DEDICATED`), masa berlaku, default penerimaan/pengeluaran |
+| Kesiapan keuangan | Checklist per unit (identitas, mapping akun, rekening aktif & terverifikasi) → `READY` / `NOT_CONFIGURED` |
+| Akses | Role pusat & cabang, scope unit per pengguna, permission per aksi |
+| Audit | Semua perubahan konfigurasi tercatat (`before`/`after`, aktor, alasan, IP) |
+| Siswa & penempatan | Master siswa per yayasan, riwayat penempatan unit/tahun ajaran (pernah pindah unit tetap tercatat) |
+| Tarif | Jenis biaya (+akun pendapatan, mode pengakuan), tarif per unit/tahun ajaran dengan masa berlaku, frekuensi, dan jumlah angsuran |
+| Tagihan & piutang | Generate tagihan per unit + periode (idempoten), rincian per jenis biaya, angsuran, daftar tagihan, pembatalan (VOID), piutang + aging |
+| Penerimaan | Kwitansi bernomor per tanggal + unit, metode bayar, rekening penerimaan sesuai mapping unit, alokasi ke satu/beberapa tagihan, sisa sebagai uang belum dialokasikan, pembatalan (VOID) yang memulihkan tagihan, idempotency key |
+| Kas & bank | Saldo per rekening dari mutasi (masuk/keluar), daftar mutasi dengan filter rekening & tanggal, total masuk/keluar, pembatasan rekening per scope unit |
+| Pengeluaran | Jenis biaya (wajib akun beban), vendor, pengajuan dengan unit penanggung beban, alur Draft → Diajukan → Disetujui/Ditolak → Dibayar, pembayaran sebagian/penuh dari rekening berizin bayar, pembatalan pembayaran (VOID) dengan mutasi balik, idempotency key, maker-checker |
+| Akuntansi | Bagan akun (CoA) dengan tipe & saldo normal, jurnal otomatis dari tagihan/penerimaan/pengeluaran, jurnal manual, jurnal pembalik (reversal), neraca saldo, buku besar, rekonsiliasi subledger vs GL, periode fiskal bulanan + tutup/buka kembali (ACC-01/02/03) |
+| Laporan | Ringkasan cabang & jenjang (tagihan, penerimaan, pengeluaran, surplus, piutang, siswa), aging, status closing, posisi keuangan, aktivitas pendapatan–beban, arus kas per sumber, dan **drill-down** ke dokumen sumber — semua dibatasi scope unit pengguna |
+| Hardening | Rate limit login (5 gagal / 15 menit), header keamanan, detail error tidak dibocorkan di production, proteksi VAL-08 untuk identitas unit, dokumentasi API & traceability UAT, skrip verifikasi satu perintah |
 
-**F&B Control** adalah platform *finance control & accounting* untuk bisnis F&B (restoran/kafe/dapur produksi) yang berjalan **multi-workspace → multi-company → multi-location**. Aplikasi ini menjembatani operasional outlet (klien) dengan tim akuntansi (Akuntakita):
+**Belum termasuk (fase berikut):** pengakuan pendapatan `DEFERRED`, lampiran/bukti dokumen,
+alokasi biaya bersama antarunit, anggaran & unit cost, integrasi & rekonsiliasi bank otomatis,
+transfer antarunit sebagai perpindahan kas, ekspor Excel/PDF.
 
-- **Sisi klien (outlet)**: input faktur pembelian, kas keluar/masuk, pemakaian bahan, transfer & opname stok, produksi berbasis BOM, import penjualan dari POS (Quinos), master item/partner per company.
-- **Sisi akuntansi**: antrean verifikasi kas masuk/keluar, mesin jurnal otomatis (auto-journal engine) dari setiap transaksi, review & posting jurnal, template COA standar, kontrol akses per workspace/company/lokasi.
-- **Lampiran** dokumen (nota, foto) tersimpan di Cloudflare R2; **data** di MariaDB.
+## 2. Tech stack
 
-Deploy produksi memakai **Coolify** (2 aplikasi: frontend Nginx + backend Node) — panduan lengkap di [README-COOLIFY.md](README-COOLIFY.md). Aturan kerja agent AI/kontributor di [AGENTS.md](AGENTS.md).
+| Lapisan | Teknologi |
+|---|---|
+| Frontend | React 19 + TypeScript + Vite, CSS per modul, `lucide-react` |
+| Backend | Node.js 22 + Express + TypeScript (`tsx`) |
+| Database | MariaDB ≥ 10.11 via `mysql2` (placeholder `?`) |
+| Auth | JWT 12 jam di cookie httpOnly (`school_session`), bcrypt |
+| Migrasi | SQL bernomor di `backend/db/migrations`, runner idempoten (`schema_migrations`) |
+| Deploy | Docker per paket; Nginx memproksi `/api` ke backend (Coolify) |
 
-## 2. Tech Stack
-
-| Lapisan | Teknologi | Catatan |
-|---|---|---|
-| Frontend | **React 18 + TypeScript + Vite** | SPA; build statis disajikan **Nginx 1.27** yang memproksi `/api/*` ke backend. Styling CSS murni per modul (`*.css`), ikon `lucide-react`. |
-| Backend | **Node.js 22 + Express + TypeScript (tsx)** | REST API di `/api/*`, port 3000. Tidak ada build step — `tsx` menjalankan TS langsung. |
-| Database | **MariaDB ≥ 10.11** (produksi 11.8) via `mysql2` | Adapter `server/db.ts` memberi API mirip `pg` (`query`, `pool.connect`, `$1` → `?`, `RETURNING`, `->>`, `ON CONFLICT`). Skema & seed dijalankan otomatis saat start (`server/migrate.ts`, tabel `schema_migrations`). |
-| Auth | **JWT (12 jam) di cookie httpOnly** `fnb_session` | `bcryptjs` untuk password; otorisasi berbasis **role per workspace membership** (`server/access.ts`: `canAccessCompany`, `canCreateTransaction`, `canPostJournal`, …). `COOKIE_SECURE=auto` mengikuti `X-Forwarded-Proto`. |
-| Storage | **Cloudflare R2** (S3-compatible, `@aws-sdk/client-s3`) | `server/storage.ts` — driver `r2` (produksi) / `local` (dev). File dialirkan lewat backend (bucket privat). |
-| Perhitungan bersama | `shared/transactionMath.ts`, `shared/bomMath.ts`, `shared/quinosInvoiceParser.ts` | Kode **identik** di `backend/shared` dan `frontend/shared` agar angka di UI = angka di server. `decimal.js` untuk presisi uang. |
-| Uji | `node:test` (unit), `tests/e2e_api.py` (smoke seluruh API) | Lihat §6. |
-| Deploy | Docker (Dockerfile per paket), Coolify, MariaDB + phpMyAdmin (opsional) | Nginx `proxy_pass` dengan resolver runtime → frontend tetap hidup saat backend restart. |
-
-## 3. Folder Structure
-
-```
-Recordfnb-control/
-├── backend/                         # API Express (Node 22, TypeScript via tsx)
-│   ├── server/
-│   │   ├── index.ts                 # bootstrap app: middleware, mount router /api/*, urutan start (migrasi → admin → R2 → listen)
-│   │   ├── db.ts                    # adapter pg-like di atas mysql2 (translasi SQL, transaksi, pool)
-│   │   ├── migrate.ts               # runner SQL idempoten untuk database/mariadb/*.sql
-│   │   ├── auth.ts                  # JWT + cookie sesi, requireAuth, hashing password
-│   │   ├── access.ts                # otorisasi role per workspace/company/location (can*/has*)
-│   │   ├── bootstrap.ts             # pembuatan/penjagaan admin sistem dari env BOOTSTRAP_ADMIN_*
-│   │   ├── storage.ts               # driver lampiran: r2 | local (put/get/remove/verifyStorage)
-│   │   ├── *Routes.ts               # HTTP layer per modul (validasi input → panggil engine/query → respons JSON)
-│   │   │   masterRoutes, financeMasterRoutes, clientMasterRoutes, clientTransactionRoutes (+ attachments),
-│   │   │   clientCashIn/OutRoutes, clientItemUsageRoutes, clientStockTransfer/OpnameRoutes,
-│   │   │   clientBomProductionRoutes, clientSalesRoutes, clientSalesImportProfileRoutes,
-│   │   │   transactionRoutes, journalRoutes, accountingCashIn/OutRoutes, coaTemplateRoutes, accessRoutes
-│   │   └── *Engine.ts               # logika bisnis murni dalam transaksi DB (tanpa HTTP):
-│   │       journalEngine (auto-journal), cashIn/cashOutEngine, itemUsageEngine, stockTransferEngine,
-│   │       stockOpnameEngine, productionEngine (BOM), salesImportEngine (POS Quinos)
-│   ├── shared/                      # matematika & parser yang dibagi dengan frontend (salinan identik)
-│   ├── database/
-│   │   ├── mariadb/                 # 001_schema.sql (51 tabel, FK), 002_seed_roles_and_coa_templates.sql, 003_trigger_*.sql
-│   │   ├── legacy-data/             # data operasional lama dari PostgreSQL (INSERT IGNORE, idempoten)
-│   │   └── legacy-postgres-migrations/  # 16 migrasi PG asli — referensi historis, tidak dijalankan
-│   ├── scripts/                     # migrate.ts (yarn db:migrate), importLegacyData.ts (yarn db:import-legacy)
-│   ├── tests/                       # *.test.ts (node:test) + e2e_api.py (smoke seluruh API)
-│   ├── Dockerfile · .dockerignore · .env.example · package.json · tsconfig.json
-├── frontend/                        # SPA React + Vite
-│   ├── src/
-│   │   ├── main.tsx · App.tsx       # entry, routing, shell menu (grup Klien / Akuntansi / Master / Pengaturan)
-│   │   ├── api.ts                   # helper fetch (credentials: include, error → Error(body.error))
-│   │   ├── Client*.tsx              # halaman sisi klien (PurchaseInvoice, CashIn/Out, ItemUsage, StockTransfer, StockOpname,
-│   │   │                            #   BomProduction, SalesImport*, ItemCenter, PartnerCenter, InventoryControl)
-│   │   ├── Accounting*Queue.tsx     # antrean verifikasi akuntansi
-│   │   ├── JournalCenter.tsx · StandardCoaCenter.tsx · MasterFinanceCenter.tsx · MasterItemCenter.tsx
-│   │   ├── UserAccessCenter.tsx · SettingsSecurity.tsx
-│   │   ├── TransactionForm.tsx · SearchSelect.tsx   # komponen bersama
-│   │   └── *.css                    # style per modul (+ foundation.css, styles.css, menuGroups.css)
-│   ├── shared/                      # salinan identik backend/shared
-│   ├── nginx/                       # default.conf.template + *.envsh (normalisasi BACKEND_URL, resolver fallback)
-│   ├── Dockerfile · .dockerignore · vite.config.ts · package.json · tsconfig.json
-├── docs/                            # catatan fitur (mis. v0.16a flexible POS import)
-├── legacy/                          # docker-compose & Dockerfile single-container versi lama (referensi)
-├── .github/                         # ci.yml.example (workflow CI; aktifkan dengan memindahkan ke workflows/)
-├── AGENTS.md                        # SOP kerja agent AI (Load by token → kerja → Save via PR)
-├── README-COOLIFY.md                # panduan deploy Coolify: env, alias jaringan, MariaDB, R2, troubleshooting
-└── README.md
-```
-
-## 4. Data Flow
-
-### 4.1 Alur request umum
+## 3. Struktur
 
 ```
-Browser (React SPA, cookie fnb_session)
-   │  fetch('/api/…', credentials: 'include')          ← path relatif, tanpa URL absolut
-   ▼
-Nginx (container frontend, :80, domain publik)
-   │  location /api/ → proxy_pass http://backend-fnb:3000 (alias jaringan Coolify)
-   │  meneruskan X-Forwarded-Proto/Host; 502 JSON BACKEND_UNAVAILABLE jika backend belum siap
-   ▼
-Express (backend, :3000, tanpa domain publik)
-   │  cookieParser → requireAuth (verifikasi JWT → req.sessionUser)
-   │  *Routes.ts: validasi & normalisasi input → access.ts (cek role di workspace/company/location)
-   │  *Engine.ts: logika bisnis dalam 1 transaksi DB (pool.connect → BEGIN … COMMIT/ROLLBACK)
-   ▼
-db.ts (adapter pg-like) ── SQL diterjemahkan ($1→?, RETURNING, ->>, ON CONFLICT) ──▶ MariaDB
-   │
-   └─ storage.ts ──(lampiran: put/get/remove)──▶ Cloudflare R2 (bucket privat, key: attachments/<workspace>/<tx>/<uuid>-<nama>)
+backend/
+  db/migrations/001_foundation.sql        # skema organisasi, unit, rekening, akses, audit
+  db/migrations/002_seed_foundation.sql   # seed contoh: Yayasan, TK/SD, TK-PANAM (Draft)
+  db/migrations/003_billing.sql           # siswa, enrollment, tarif, tagihan, angsuran
+  db/migrations/004_receipts.sql          # penerimaan, alokasi, mutasi kas & bank
+  db/migrations/005_disbursements.sql     # kategori biaya, vendor, pengajuan, pembayaran
+  db/migrations/006_accounting.sql        # CoA, periode fiskal, jurnal + seed 9 akun
+  src/index.ts                            # migrasi -> bootstrap admin -> listen
+  src/db.ts · src/http.ts                 # pool & helper validasi
+  src/auth.ts · src/permissions.ts        # sesi, 8 role, permission, unit scope
+  src/audit.ts                            # audit trail terstruktur
+  src/rateLimit.ts                        # rate limit percobaan login (in-memory)
+  src/accounting.ts                       # mesin jurnal: periode, posting, reversal, mapping
+  src/routes/organizationRoutes.ts        # hierarki, master, unit, readiness, assignments
+  src/routes/bankRoutes.ts                # rekening fisik + verifikasi
+  src/routes/userRoutes.ts                # pengguna, scope unit, audit log global
+  src/routes/studentRoutes.ts             # siswa + penempatan unit
+  src/routes/feeRoutes.ts                 # jenis biaya + tarif per unit
+  src/routes/billingRoutes.ts             # billing run, invoice, void
+  src/routes/receivableRoutes.ts          # piutang + aging
+  src/routes/receiptRoutes.ts             # penerimaan, alokasi, pembatalan
+  src/routes/cashBankRoutes.ts            # saldo & mutasi kas/bank
+  src/routes/expenseRoutes.ts             # kategori, vendor, pengajuan, pembayaran, void
+  src/routes/accountingRoutes.ts          # CoA, periode, jurnal, neraca saldo, rekonsiliasi, backfill
+  src/routes/reportRoutes.ts              # ringkasan, posisi, aktivitas, arus kas, drill-down
+  src/routes/dashboardRoutes.ts
+frontend/
+  src/App.tsx                             # shell + menu per permission
+  src/pages/Dashboard.tsx · Organization.tsx · Units.tsx
+  src/pages/BankAccounts.tsx · Readiness.tsx · Users.tsx · Audit.tsx
+  src/pages/Students.tsx · Fees.tsx · Billing.tsx · Receivables.tsx
+  src/pages/Receipts.tsx · CashBank.tsx · Expenses.tsx · Accounting.tsx · Reports.tsx
+tests/foundation_uat.py                   # UAT T01–T10 + T19 (blueprint)
+tests/billing_uat.py                      # UAT BILL-01 (tagihan & piutang)
+tests/receipt_uat.py                      # UAT FC-01 (penerimaan & kas/bank)
+tests/expense_uat.py                      # UAT FC-01 (pengeluaran & maker-checker)
+tests/accounting_uat.py                   # UAT ACC-01 (jurnal, rekonsiliasi, tutup buku)
+tests/report_uat.py                        # UAT RPT-01 (agregasi & drill-down)
+docs/API.md                               # kontrak API, permission matrix, kode error
+docs/UAT.md                               # traceability T01–T20 + hasil uji
+scripts/verify.sh                         # typecheck + build + semua suite UAT
 ```
 
-### 4.2 Alur bisnis utama: transaksi klien → jurnal akuntansi
-
-```
-1. Klien membuat dokumen (mis. Purchase Invoice)  → POST /api/client-transactions
-   • transactionMath (shared) menghitung subtotal/diskon/pajak/total — sama di UI dan server
-   • header + lines disimpan (transaction_headers, transaction_lines), nomor dokumen dari document_sequences
-   • lampiran → POST /api/client-transactions/:id/attachments → R2 + tabel attachments
-2. Kas keluar/masuk, pemakaian bahan, transfer/opname stok, produksi BOM, import penjualan POS
-   → engine masing-masing menulis mutasi stok (inventory) & transaksi keuangan
-3. journalEngine (auto-journal) membentuk journal_headers + journal_lines dari aturan pemetaan akun
-   (chart_of_accounts, payment/sales mapping) — status DRAFT
-4. Akuntansi: antrean verifikasi (/api/accounting-cash-ins|outs) → review jurnal (/api/journals)
-   → posting oleh role yang berwenang (canReviewJournal / canPostJournal)
-5. Laporan & pusat jurnal membaca data terposting (JournalCenter, MasterFinanceCenter)
-```
-
-### 4.3 Siklus hidup backend saat start
-
-`runMigrations()` (skema/seed idempoten) → `bootstrapAdmin()` (admin dari env; password lama dipertahankan) → `verifyStorage()` (HeadBucket R2, *fail fast* bila env kurang) → `app.listen(3000)`. Healthcheck: `GET /api/health` → `{ ok, databaseTime }`.
-
-## 5. Coding Conventions
-
-### 5.1 Bahasa & penamaan
-- **Bahasa**: teks UI, pesan error yang dibaca pengguna, commit, PR, dan dokumentasi dalam **Bahasa Indonesia**. Kode error API berupa konstanta `UPPER_SNAKE_CASE` (`TRANSACTION_NOT_FOUND`, `FORBIDDEN`, `ATTACHMENT_STORAGE_UNAVAILABLE`) — frontend menerjemahkannya ke teks.
-- **File backend**: `camelCase.ts` dengan sufiks peran — `<modul>Routes.ts` (HTTP), `<modul>Engine.ts` (logika bisnis), infrastruktur tanpa sufiks (`db.ts`, `auth.ts`, `access.ts`, `storage.ts`). Awalan `client` = fitur sisi outlet, `accounting` = sisi akuntansi.
-- **File frontend**: komponen/halaman `PascalCase.tsx` (satu halaman satu file), style pendamping `camelCase.css` dengan nama sama (`ClientCashOut.tsx` ↔ `clientCashOut.css`), util `camelCase.ts` (`api.ts`).
-- **Variabel/fungsi**: `camelCase`; tipe/interface `PascalCase`; konstanta modul `UPPER_SNAKE_CASE`. Fungsi otorisasi berawalan `can*`/`has*`. Kolom database & JSON API **`snake_case`** (mengikuti skema: `workspace_id`, `file_name`, `uploaded_at`) — jangan mengubah ke camelCase di response.
-- **Identifier**: UUID string untuk semua primary key; waktu dalam UTC ISO-8601 (`created_at`, `updated_at`).
-
-### 5.2 Backend
-- Route hanya: baca & validasi input (`text()`/`num()` helper), cek akses via `access.ts`, panggil engine/query, kirim JSON + status yang tepat (`201` create, `204` delete, `400` validasi, `403` akses, `404` tidak ada, `502` layanan luar). Tidak ada logika bisnis di route.
-- Operasi multi-tabel selalu dalam **satu transaksi** (`const client = await pool.connect(); BEGIN … COMMIT; ROLLBACK di catch; release di finally`).
-- Tulis SQL gaya PostgreSQL (`$1`, `RETURNING`) — `db.ts` menerjemahkan ke MariaDB. Hindari fitur PG yang tidak didukung adapter (array literal, `jsonb_*`, CTE rekursif); jika perlu fitur baru, tambahkan di `db.ts` **beserta unit test**, jangan tulis SQL MariaDB mentah di route.
-- Perubahan skema = file baru bernomor di `database/mariadb/NNN_deskripsi.sql`, idempoten (`IF NOT EXISTS`, `INSERT IGNORE`); jangan mengubah file migrasi yang sudah pernah jalan.
-- Konfigurasi hanya lewat `process.env` dengan default aman untuk dev; setiap env baru dicatat di `.env.example` dan `README-COOLIFY.md` (wajib vs opsional + default).
-- Log ke `console` dengan awalan modul dalam kurung siku: `[migration]`, `[bootstrap]`, `[storage]`, `[attachments]`. Tidak ada `console.log` debug tersisa di PR.
-- `import … from './x.js'` (ESM, ekstensi `.js` walau sumber `.ts`), `node:` prefix untuk modul inti.
-
-### 5.3 Frontend
-- Komponen fungsi + hooks; state lokal per halaman, tanpa state manager global. Semua pemanggilan API lewat `api<T>()` di `api.ts` (bukan `fetch` langsung) dan path **relatif** `/api/...`.
-- Perhitungan angka **wajib** memakai `shared/*` (jangan hitung ulang di komponen) agar sama dengan server.
-- Elemen interaktif dan data penting memakai `data-testid` kebab-case (`purchase-invoice-submit`, `attachment-list`).
-- Style: CSS per modul dengan kelas berprefiks nama modul (`.cash-out__table`), token warna/spasi di `foundation.css`; tidak menambah library UI/ikon baru tanpa persetujuan.
-- Perubahan di `shared/` dilakukan **di kedua salinan** (`backend/shared` dan `frontend/shared`) dalam commit yang sama.
-
-### 5.4 Pengujian & kualitas
-- Unit: `node:test` di `backend/tests/*.test.ts` untuk `shared/*` dan logika murni. Smoke API: `python3 backend/tests/e2e_api.py <base_url> <email> <password>` (menjalankan hampir semua route termasuk lampiran R2) → harus `gagal: 0`.
-- Sebelum PR: `cd backend && yarn test && yarn typecheck`; `cd frontend && yarn typecheck && yarn build`. Frontend harus lulus build dengan `CI=true`.
-- Format: TypeScript `strict`, 2 spasi, kutip tunggal, titik koma; ikuti gaya file yang sedang diedit.
-
-### 5.5 Git
-- Branch `feat/…`, `fix/…`, `docs/…`, `chore/…`, `refactor/…`; commit **Conventional Commits** (`feat(storage): …`); satu PR = satu tujuan, base `main`, tidak merge sendiri. Detail alur (Load by token → kerja → Save via PR) di [AGENTS.md](AGENTS.md).
-- Jangan commit `.env*` (kecuali `.env.example`), dump data, `node_modules/`, `dist/`, folder upload.
-
-## 6. Menjalankan secara lokal
+## 4. Menjalankan lokal
 
 ```bash
-# Backend (butuh MariaDB lokal; STORAGE_DRIVER=local untuk tanpa R2)
-cd backend && cp .env.example .env && yarn install && yarn dev        # http://localhost:3000/api/health
+# Database
+#   buat database (mis. school_finance) + user, lalu set DATABASE_URL
 
-# Frontend (Vite dev server; /api diproksi ke VITE_DEV_API_TARGET, default http://localhost:8001)
-cd frontend && yarn install && yarn dev
+cd backend && cp .env.example .env      # isi DATABASE_URL, JWT_SECRET, BOOTSTRAP_ADMIN_*
+yarn install && yarn dev                # http://localhost:4100/api/health
 
-# Uji
-cd backend  && yarn test && yarn typecheck
-cd frontend && yarn typecheck && yarn build
-python3 backend/tests/e2e_api.py http://localhost:3000 <email> <password>
-
-# Migrasi & data lama (opsional)
-cd backend && yarn db:migrate && yarn db:import-legacy
+cd frontend && yarn install && yarn dev # http://localhost:4200 (proxy /api -> :4100)
 ```
 
-Login awal: `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` dari `.env` (dibuat saat backend pertama start).
+Migrasi dan admin awal berjalan otomatis saat backend start.
+`yarn db:migrate` tersedia untuk menjalankan migrasi manual.
+
+## 5. Role & permission
+
+| Role | Cakupan |
+|---|---|
+| Pimpinan Yayasan | Monitoring semua cabang, approval (tanpa ubah jurnal) |
+| Admin Yayasan | Organisasi, pengguna, rekening, unit |
+| Finance Pusat | Rekening & mapping seluruh unit |
+| Accounting Pusat | Mapping akun & kesiapan keuangan |
+| Kepala Jenjang | Monitoring jenjang yang ditetapkan |
+| Kepala Cabang | Monitoring/approval unit sendiri |
+| Bendahara Cabang | Input pada unit sendiri |
+| Auditor | Read-only + audit trail |
+
+Role pusat (`PIMPINAN`, `ADMIN_YAYASAN`, `FINANCE_PUSAT`, `ACCOUNTING_PUSAT`, `AUDITOR`) melihat
+seluruh unit. Role cabang dibatasi `user_unit_access` dan **dicek di server** pada setiap endpoint.
+
+## 6. API utama
+
+Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **[`docs/API.md`](docs/API.md)**.
+
+| Method | Endpoint | Keterangan |
+|---|---|---|
+| GET | `/api/v1/organization/hierarchy` | Struktur organisasi + ringkasan unit |
+| GET/PUT | `/api/v1/organization/legal-entity` | Profil badan hukum |
+| GET/POST/PUT | `/api/v1/organization/education-levels`, `school-groups`, `official-schools`, `locations`, `academic-years` | Master organisasi |
+| GET/POST | `/api/v1/organization/units` | List (filter jenjang/status/cari) & buat Draft |
+| GET/PATCH | `/api/v1/organization/units/{id}` | Detail (settings, assignments, readiness, audit) & edit |
+| POST | `/api/v1/organization/units/{id}/activate`, `/deactivate` | Lifecycle terkontrol |
+| GET | `/api/v1/organization/units/{id}/readiness` | Checklist kesiapan keuangan |
+| PUT | `/api/v1/organization/units/{id}/finance-settings` | Mode rekening + mapping akun |
+| POST/DELETE | `/api/v1/organization/units/{id}/bank-assignments[/{assignmentId}]` | Mapping rekening unit |
+| GET/POST/PUT | `/api/v1/bank-accounts` | Rekening fisik |
+| POST | `/api/v1/bank-accounts/{id}/verify`, `/deactivate` | Verifikasi & nonaktif |
+| GET/POST/PATCH | `/api/v1/users` | Pengguna + role |
+| PUT | `/api/v1/users/{id}/units` | Scope unit |
+| GET | `/api/v1/audit-logs` | Jejak audit (filter entitas) |
+| GET | `/api/v1/dashboard` | Ringkasan yayasan |
+| GET/POST/PATCH | `/api/v1/students[/{id}]` | Siswa + penempatan unit |
+| POST | `/api/v1/students/{id}/enrollments` | Pindah unit / tahun ajaran (histori tetap) |
+| GET/POST/PATCH | `/api/v1/fee-types[/{id}]` | Jenis biaya |
+| GET/POST/PATCH | `/api/v1/fee-schemes[/{id}]` | Tarif per unit & tahun ajaran |
+| GET | `/api/v1/billing-runs` | Riwayat generate tagihan |
+| POST | `/api/v1/billing-runs/preview` | Pratinjau tagihan (siswa, tarif, total) |
+| POST | `/api/v1/billing-runs/generate` | Terbitkan tagihan (idempoten per unit+tahun+periode) |
+| GET | `/api/v1/invoices`, `/api/v1/invoices/{id}` | Daftar & rincian tagihan |
+| POST | `/api/v1/invoices/{id}/void` | Batalkan tagihan (alasan wajib, tanpa hapus data) |
+| GET | `/api/v1/receivables` | Piutang + aging per unit |
+| GET/POST | `/api/v1/receipts` | Daftar (filter unit/tanggal/status/cari) & catat penerimaan + alokasi |
+| GET | `/api/v1/receipts/{id}` | Rincian penerimaan + alokasi per tagihan |
+| POST | `/api/v1/receipts/{id}/void` | Batalkan penerimaan (tagihan kembali, mutasi keluar tercatat) |
+| GET | `/api/v1/cash-bank/balances` | Saldo per rekening (masuk − keluar) + unit penerima |
+| GET | `/api/v1/cash-bank/mutations` | Mutasi kas & bank + total masuk/keluar terfilter |
+| GET/POST/PATCH | `/api/v1/expense-categories[/{id}]` | Jenis biaya keluar + akun beban (CoA) |
+| GET/POST/PATCH | `/api/v1/vendors[/{id}]` | Vendor/penerima pembayaran |
+| GET/POST | `/api/v1/expenses` | Daftar (filter unit/status/tanggal/cari) & buat pengajuan |
+| GET | `/api/v1/expenses/{id}` | Rincian pengajuan + riwayat pembayaran |
+| POST | `/api/v1/expenses/{id}/submit`, `/approve`, `/reject`, `/cancel` | Alur pengajuan (maker-checker) |
+| GET | `/api/v1/expense-payments` | Daftar pembayaran pengeluaran |
+| POST | `/api/v1/expenses/{id}/payments` | Catat pembayaran (sebagian/penuh, idempotent) |
+| POST | `/api/v1/expense-payments/{id}/void` | Batalkan pembayaran + mutasi masuk balik |
+| GET/POST/PATCH | `/api/v1/accounts[/{id}]` | Bagan akun (CoA) + tipe, saldo normal, postable |
+| GET | `/api/v1/fiscal-periods` | Periode fiskal bulanan (dibuat otomatis saat posting) |
+| POST | `/api/v1/fiscal-periods/{id}/close`, `/reopen` | Tutup/buka kembali periode (alasan wajib saat buka) |
+| GET | `/api/v1/journal-entries`, `/journal-entries/{id}` | Daftar & rincian jurnal |
+| POST | `/api/v1/journal-entries` | Jurnal manual (debit = kredit) |
+| POST | `/api/v1/journal-entries/{id}/reverse` | Jurnal pembalik (tanpa menimpa jurnal asli) |
+| GET | `/api/v1/accounting/trial-balance` | Neraca saldo per akun |
+| GET | `/api/v1/accounting/general-ledger` | Buku besar per akun |
+| GET | `/api/v1/accounting/reconciliation` | Piutang, uang muka, dan kas: subledger vs GL |
+| POST | `/api/v1/accounting/backfill` | Posting jurnal untuk transaksi lama (idempoten) |
+| GET | `/api/v1/reports/overview` | Ringkasan KPI + per cabang + per jenjang + aging + status closing |
+| GET | `/api/v1/reports/position` | Posisi keuangan (aset, liabilitas, aset neto, surplus) |
+| GET | `/api/v1/reports/activity` | Pendapatan & beban per akun + surplus |
+| GET | `/api/v1/reports/cash-flow` | Arus kas: saldo awal, mutasi per sumber, saldo akhir |
+| GET | `/api/v1/reports/drilldown` | Daftar dokumen sumber (`billed`/`collected`/`expense`/`outstanding`) |
+
+Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
+`UNIT_FINANCE_NOT_READY`, `BANK_ACCOUNT_NOT_ALLOWED`, `BANK_ACCOUNT_DEDICATED_CONFLICT`,
+`BANK_ACCOUNT_NOT_ASSIGNED_TO_UNIT`, `ALLOCATION_EXCEEDS_OUTSTANDING`,
+`ALLOCATION_EXCEEDS_RECEIPT`, `RECEIPT_ALREADY_VOID`, `EXPENSE_SELF_APPROVAL_FORBIDDEN`,
+`EXPENSE_ACCOUNT_MAPPING_MISSING`, `PAYMENT_EXCEEDS_REMAINING`, `EXPENSE_NOT_APPROVED`,
+`JOURNAL_NOT_BALANCED`, `JOURNAL_NOT_REVERSIBLE`, `ACCOUNT_MAPPING_MISSING`, `PERIOD_CLOSED`,
+`PERMISSION_DENIED`, dan seterusnya.
+
+## 7. Aturan validasi yang sudah diterapkan
+
+- **VAL-01/02** kode & nama unit wajib, kode unik per yayasan dan tidak dipakai ulang.
+- **VAL-03** jenjang/kelompok/sekolah/lokasi harus milik badan hukum yang sama.
+- **VAL-04** aktivasi ditolak bila jenjang sekolah resmi tidak sesuai jenjang unit.
+- **VAL-05** NPSN unik; format 8 karakter alfanumerik.
+- **VAL-06** provinsi tanpa kota ditolak; kode pos 5 angka.
+- **VAL-09** tidak ada hapus fisik; unit dinonaktifkan/diarsipkan.
+- **BANK-01** mode `MIXED` butuh rekening `CENTRAL` dan `DEDICATED` aktif & terverifikasi.
+- **BANK-02/03** rekening khusus tidak boleh dipakai dua unit pada periode tumpang tindih; rekening wajib aktif & terverifikasi.
+- **BANK-04** default penerimaan/pengeluaran tidak boleh ganda pada periode yang sama.
+- **ACC-01** mapping akun piutang & pendapatan wajib untuk status `READY`.
+- **Audit** perubahan konfigurasi mencatat before/after, aktor, alasan, IP.
+- **BILL-01** tagihan hanya untuk unit `ACTIVE` + `finance_status=READY`; duplikat unit+tahun+periode ditolak; pembatalan hanya bila belum ada pembayaran; nilai uang dihitung dalam sen agar pembagian angsuran deterministik.
+- **FC-01** penerimaan hanya ke rekening `ACTIVE` + terverifikasi **dan** dipetakan ke unit pada tanggal transaksi; alokasi tidak boleh melebihi sisa tagihan (`ALLOCATION_EXCEEDS_OUTSTANDING`) maupun nilai penerimaan; `idempotencyKey` mencegah posting ganda; pembatalan tidak menghapus data (status `VOID` + mutasi keluar), tagihan/angsuran dihitung ulang dari alokasi yang masih `POSTED`; semua nilai diproses dalam sen.
+- **FC-01 pengeluaran** unit harus `ACTIVE` + `READY`; jenis biaya wajib punya akun beban (**ACC-01**); pengaju **tidak boleh** menyetujui/menolak pengajuannya sendiri (maker-checker); pembayaran hanya dari rekening `ACTIVE` + terverifikasi + `allow_disbursement` untuk unit pada tanggal bayar (**BANK-03/BANK-05**); total pembayaran tidak boleh melebihi nilai pengajuan (**BANK-07**); `idempotencyKey` membuat dua permintaan identik hanya menghasilkan satu posting (**T20**); VOID mencatat mutasi masuk balik dan menghitung ulang sisa.
+- **ACC-01** akun pada mapping tarif/jenis biaya/rekening harus ada di CoA dan bertipe sesuai (**ACC-01**); jurnal hanya seimbang debit = kredit (**ACC-02**); posting ke periode `CLOSED` ditolak dan pembukaan kembali wajib alasan + audit (**ACC-03**); koreksi memakai jurnal pembalik, jurnal posted tidak ditimpa; setiap sumber transaksi punya idempotency key (`INVOICE:<id>`, `RECEIPT:<id>`, `EXPENSE_PAYMENT:<id>`) sehingga backfill aman diulang.
+- **Rekonsiliasi** piutang subledger vs GL `1-1200`, uang muka vs penerimaan belum dialokasikan, dan kas GL vs mutasi bank + jurnal manual; selisih yang tidak dapat dijelaskan dilaporkan apa adanya.
+- **RPT-01** setiap angka ringkasan harus sama dengan hasil drill-down pada rentang & unit yang sama (tagihan, penerimaan, pengeluaran, piutang); aging wajib menjumlah ke total piutang; agregasi jenjang = agregasi unit; saldo kas laporan = saldo akun kas di buku besar; role cabang hanya menerima unit dalam scope-nya (`UNIT_FORBIDDEN` bila meminta unit lain).
+- **Hardening (FD-06)** maksimum 5 percobaan login gagal per IP+email dalam 15 menit (`429 TOO_MANY_ATTEMPTS`); login berhasil tidak dihitung; respons API memakai header keamanan dan `Cache-Control: no-store`; `detail` error hanya dikirim saat `NODE_ENV !== production`; perubahan jenjang/sekolah resmi unit yang sudah bertransaksi ditolak `409 UNIT_IDENTITY_LOCKED` (VAL-08).
+
+## 8. Pengujian
+
+Verifikasi satu perintah (typecheck + build + semua suite UAT):
+
+```bash
+ADMIN_EMAIL=admin@sekolah.test ADMIN_PASSWORD='...' bash scripts/verify.sh
+```
+
+Tanpa kredensial, skrip hanya menjalankan typecheck dan build. Rincian skenario dan
+hasil per asersi ada di **[`docs/UAT.md`](docs/UAT.md)**.
+
+Menjalankan manual:
+
+```bash
+cd backend && yarn typecheck
+cd frontend && yarn typecheck && CI=true yarn build
+
+# UAT (DB lokal/staging)
+BASE=http://127.0.0.1:4100 \
+ADMIN_EMAIL=admin@sekolah.test \
+ADMIN_PASSWORD='...' \
+uv run --with httpx python tests/foundation_uat.py   # FD-01…FD-05
+# ganti nama file: billing_uat.py · receipt_uat.py · expense_uat.py
+#                  accounting_uat.py · report_uat.py
+```
+
+Hasil terakhir: Foundation **23/23**, BILL-01 **25/25**, FC-01 penerimaan **51/51**,
+FC-01 pengeluaran **52/52**, ACC-01 **45/45**, RPT-01 **31/31** — total **227/227 lulus**.
+Semua suite bersifat rerun-safe (kode unik per `RUN_SUFFIX`, periode unik) dan hanya untuk DB
+lokal/staging. UAT ACC-01 membuat user `ACCOUNTING_PUSAT` sendiri karena izin `journal.post`
+tidak diberikan ke Admin Yayasan (pemisahan tugas, blueprint §08).
+
+## 9. Roadmap sesuai blueprint
+
+| Fase | Cakupan |
+|---|---|
+| FD-01…FD-05 | ✅ Foundation (dokumen ini) |
+| FD-06 | ✅ Hardening: rate limit login, header keamanan, VAL-08, `docs/API.md`, `docs/UAT.md`, `scripts/verify.sh` |
+| BILL-01 | ✅ Siswa, enrollment, tarif, tagihan, cicilan, piutang |
+| FC-01 | ✅ Penerimaan & alokasi, kas & bank, pengeluaran (maker-checker) |
+| ACC-01 | ✅ CoA, jurnal otomatis & manual, reversal, rekonsiliasi, tutup buku |
+| RPT-01 | ✅ Ringkasan cabang/jenjang/yayasan, posisi, aktivitas, arus kas, drill-down — anggaran & unit cost menyusul |

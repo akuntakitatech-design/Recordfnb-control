@@ -1,22 +1,19 @@
 {
-  "name": "akuntakita-fnb-control-web",
+  "name": "akuntakita-school-web",
   "private": true,
-  "version": "0.18.0",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Akuntakita F&B Control - Frontend (React + Vite) disajikan lewat Nginx",
+  "description": "School Control - Frontend (React + Vite)",
   "scripts": {
     "dev": "vite",
-    "start": "vite --host 0.0.0.0 --port 3000",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "decimal.js": "^10.4.3",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "xlsx": "^0.18.5"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
