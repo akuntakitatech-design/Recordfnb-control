@@ -119,7 +119,7 @@ def main() -> int:
     check("rekening punya izin terima", bool(receipt_accounts[0]["allow_receipt"]), receipt_accounts[0].get("usage_type"))
 
     # Prasyarat: tarif + siswa
-    fee = admin.post("/api/v1/fee-types", json={"code": f"SPP{SUFFIX}", "name": f"SPP UAT {SUFFIX}"})
+    fee = admin.post("/api/v1/fee-types", json={"code": f"SPR{SUFFIX}", "name": f"SPP UAT {SUFFIX}"})
     check("jenis biaya dibuat", fee.status_code == 201, fee.text[:90])
     if fee.status_code != 201:
         return summary()
@@ -292,6 +292,80 @@ def main() -> int:
         check("rekening tanpa pemetaan unit ditolak",
               rejected.status_code == 400 and rejected.json().get("error") == "BANK_ACCOUNT_NOT_ASSIGNED_TO_UNIT",
               (rejected.status_code, rejected.text[:80]))
+
+    # 8b) T11 — penerimaan melalui rekening pusat (CENTRAL) untuk unit
+    central_accounts = [
+        row for row in balances
+        if row["account_usage"] == "CENTRAL" and unit_id in (row.get("receipt_unit_ids") or [])
+    ]
+    check("T11 rekening pusat tersedia untuk unit", len(central_accounts) >= 1, len(central_accounts))
+    if central_accounts:
+        central_receipt = admin.post("/api/v1/receipts", json={
+            **base_receipt, "bankAccountId": central_accounts[0]["id"], "totalAmount": 100000,
+            "idempotencyKey": f"rcpt-central-{SUFFIX}", "allocations": [],
+        })
+        check("T11 penerimaan lewat rekening pusat diterima", central_receipt.status_code == 201,
+              central_receipt.text[:110])
+        if central_receipt.status_code == 201:
+            central_body = central_receipt.json()["receipt"]
+            check("T11 sisa menjadi uang belum dialokasikan",
+                  num(central_body["unallocated_amount"]) == 100000
+                  and num(central_body["allocated_amount"]) == 0,
+                  (central_body["allocated_amount"], central_body["unallocated_amount"]))
+            central_mutations = mutations_of(admin, central_accounts[0]["id"])
+            check("T11 mutasi masuk di rekening pusat",
+                  any(m.get("source_id") == central_body["id"] and m["direction"] == "IN"
+                      for m in central_mutations), len(central_mutations))
+
+    # 8c) T12 — satu transfer untuk siswa dua cabang
+    if other_unit:
+        check("T12 unit kedua siap", ensure_ready_unit(admin, other_unit["id"]))
+        fee_cross = admin.post("/api/v1/fee-types", json={
+            "code": f"SPX{SUFFIX}", "name": f"SPP Lintas Cabang {SUFFIX}",
+        })
+        scheme_cross = admin.post("/api/v1/fee-schemes", json={
+            "unitId": other_unit["id"], "academicYearId": year_id, "feeTypeId": fee_cross.json().get("id"),
+            "name": f"Tarif Lintas {SUFFIX}", "amount": 400000, "frequency": "MONTHLY",
+            "installmentCount": 1, "effectiveStart": "2026-07-01",
+        })
+        check("T12 tarif unit kedua dibuat",
+              fee_cross.status_code == 201 and scheme_cross.status_code == 201,
+              (fee_cross.status_code, scheme_cross.status_code))
+
+        student_cross = admin.post("/api/v1/students", json={
+            "nis": f"UATX{SUFFIX}", "fullName": f"Siswa Lintas {SUFFIX}", "gender": "L",
+            "unitId": other_unit["id"], "academicYearId": year_id, "classLabel": "SD 1",
+            "effectiveStart": "2026-07-01",
+        })
+        check("T12 siswa unit kedua dibuat", student_cross.status_code == 201, student_cross.status_code)
+
+        if student_cross.status_code == 201:
+            student_cross_id = student_cross.json()["id"]
+            invoice_cross, _ = generate_invoice(admin, other_unit["id"], year_id, f"XB{SUFFIX}", student_cross_id)
+            invoice_home, _ = generate_invoice(admin, unit_id, year_id, f"XA{SUFFIX}", student_id)
+            check("T12 tagihan dua cabang terbentuk",
+                  invoice_cross is not None and invoice_home is not None)
+            if invoice_cross and invoice_home:
+                cross_total = num(invoice_cross["total_amount"]) + num(invoice_home["total_amount"])
+                cross_receipt = admin.post("/api/v1/receipts", json={
+                    **base_receipt, "totalAmount": cross_total,
+                    "idempotencyKey": f"rcpt-cross-{SUFFIX}",
+                    "allocations": [
+                        {"invoiceId": invoice_home["id"], "amount": num(invoice_home["total_amount"])},
+                        {"invoiceId": invoice_cross["id"], "amount": num(invoice_cross["total_amount"])},
+                    ],
+                })
+                check("T12 satu penerimaan untuk dua cabang", cross_receipt.status_code == 201,
+                      cross_receipt.text[:110])
+                if cross_receipt.status_code == 201:
+                    cross_body = cross_receipt.json()["receipt"]
+                    cross_units = {row["unit_id"] for row in cross_body.get("allocations", [])}
+                    check("T12 alokasi mencakup dua unit berbeda", len(cross_units) == 2, len(cross_units))
+                    check("T12 kedua tagihan lunas",
+                          invoice_of(admin, invoice_home["id"])["status"] == "PAID"
+                          and invoice_of(admin, invoice_cross["id"])["status"] == "PAID",
+                          (invoice_of(admin, invoice_home["id"])["status"],
+                           invoice_of(admin, invoice_cross["id"])["status"]))
 
     # 9) Scope unit: bendahara unit lain tidak boleh menerima
     scope_email = f"bendahara.rcpt{SUFFIX}@sekolah.test"

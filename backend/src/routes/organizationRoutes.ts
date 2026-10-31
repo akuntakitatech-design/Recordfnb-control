@@ -535,6 +535,21 @@ organizationRouter.patch('/units/:id', requirePermission('unit.edit'), async (re
     return res.status(400).json({ error: 'HEAD_USER_NOT_FOUND' });
   }
 
+  // VAL-08: identitas akademik unit tidak boleh diubah langsung bila sudah ada transaksi.
+  const identityChanged = levelId !== before.education_level_id
+    || (schoolId || null) !== (before.official_school_id || null);
+  if (identityChanged) {
+    const transactions = await one<{ total: number }>(
+      `SELECT (SELECT COUNT(*) FROM invoices WHERE unit_id=?)
+            + (SELECT COUNT(*) FROM receipts WHERE unit_id=?)
+            + (SELECT COUNT(*) FROM expense_requests WHERE unit_id=?) total`,
+      [id, id, id],
+    );
+    if (Number(transactions?.total || 0) > 0) {
+      return res.status(409).json({ error: 'UNIT_IDENTITY_LOCKED' });
+    }
+  }
+
   const effectiveStart = req.body?.effectiveStart === undefined ? before.effective_start : nullableText(req.body.effectiveStart);
   const effectiveEnd = req.body?.effectiveEnd === undefined ? before.effective_end : nullableText(req.body.effectiveEnd);
   if (effectiveStart && !isDateOnly(effectiveStart)) return res.status(400).json({ error: 'EFFECTIVE_START_INVALID' });

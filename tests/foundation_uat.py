@@ -171,9 +171,20 @@ def main() -> int:
     r = staff.get("/api/v1/users")
     check("role cabang tidak boleh kelola pengguna", r.status_code == 403, r.status_code)
 
-    # T19 — audit trail
+    # T16 — ubah identitas akademik unit yang sudah bertransaksi harus ditolak (VAL-08)
+    tk_unit = next(unit["id"] for unit in hierarchy["units"] if unit["unit_code"] == "TK-PANAM")
+    locked = admin.patch(f"/api/v1/organization/units/{tk_unit}", json={"educationLevelId": levels["SD"]})
+    check("T16 ubah jenjang unit bertransaksi ditolak",
+          locked.status_code == 409 and locked.json().get("error") == "UNIT_IDENTITY_LOCKED",
+          (locked.status_code, locked.text[:70]))
+    notes_update = admin.patch(f"/api/v1/organization/units/{tk_unit}", json={"notes": f"UAT T16 {SUFFIX}"})
+    check("T16 edit catatan unit tetap diizinkan", notes_update.status_code == 200, notes_update.status_code)
+
+    # T19 — audit trail (termasuk perubahan mapping rekening default)
     actions = {row["action"] for row in admin.get("/api/v1/audit-logs?limit=100").json()}
-    check("T19 audit trail tercatat", "UNIT_CREATE" in actions and "BANK_ACCOUNT_VERIFY" in actions, sorted(actions)[:6])
+    check("T19 audit trail tercatat",
+          {"UNIT_CREATE", "BANK_ACCOUNT_VERIFY", "UNIT_BANK_ASSIGNMENT_CREATE"} <= actions,
+          sorted(actions)[:8])
 
     return summary()
 

@@ -330,6 +330,40 @@ def main() -> int:
     check("pengajuan tanpa pembayaran bisa dibatalkan",
           cancelled.status_code == 200 and cancelled.json().get("status") == "CANCELLED", cancelled.status_code)
 
+    # T14 — pengeluaran cabang dibayar dari rekening pusat
+    central_payable = [
+        row for row in balances
+        if row["account_usage"] == "CENTRAL" and unit_id in (row.get("disbursement_unit_ids") or [])
+    ]
+    check("T14 rekening pusat berizin bayar tersedia", len(central_payable) >= 1, len(central_payable))
+    if central_payable:
+        branch_request = create_request(staff, unit_id, category_id, 75000, f"Beban cabang dibayar pusat {SUFFIX}")
+        branch_id = branch_request.json().get("id") if branch_request.status_code == 201 else None
+        check("T14 pengajuan unit cabang dibuat", branch_id is not None, branch_request.status_code)
+        if branch_id:
+            staff.post(f"/api/v1/expenses/{branch_id}/submit")
+            approved_branch = chief.post(f"/api/v1/expenses/{branch_id}/approve")
+            check("T14 pengajuan cabang disetujui", approved_branch.status_code == 200, approved_branch.status_code)
+            central_payment = staff.post(f"/api/v1/expenses/{branch_id}/payments", json={
+                "bankAccountId": central_payable[0]["id"], "paymentDate": "2026-08-12",
+                "amount": 75000, "idempotencyKey": f"exp-central-{SUFFIX}",
+            })
+            check("T14 beban cabang dibayar dari rekening pusat", central_payment.status_code == 201,
+                  central_payment.text[:110])
+            if central_payment.status_code == 201:
+                central_body = central_payment.json()["payment"]
+                check("T14 rekening pembayaran bertipe CENTRAL", central_body["account_usage"] == "CENTRAL",
+                      central_body["account_usage"])
+                check("T14 unit beban tetap unit cabang", central_body["unit_code"] == "TK-PANAM",
+                      central_body["unit_code"])
+                central_mutations = admin.get(
+                    "/api/v1/cash-bank/mutations",
+                    params={"bankAccountId": central_payable[0]["id"], "pageSize": 100},
+                ).json()["rows"]
+                check("T14 mutasi keluar tercatat di rekening pusat",
+                      any(m.get("source_id") == central_body["id"] and m["direction"] == "OUT"
+                          for m in central_mutations), len(central_mutations))
+
     # Unit belum aktif / belum READY
     if draft_unit:
         blocked = create_request(admin, draft_unit["id"], category_id, 100000, "Pengajuan unit draft")

@@ -22,7 +22,17 @@ import { reportRouter } from './routes/reportRoutes.js';
 
 const app = express();
 app.set('trust proxy', true);
+app.disable('x-powered-by');
 const port = Number(process.env.PORT || 4100);
+
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
@@ -55,9 +65,12 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   const foreignKey = err?.code === 'ER_NO_REFERENCED_ROW_2' || err?.errno === 1452;
   const status = duplicate ? 409 : foreignKey ? 400 : 500;
   if (status === 500) console.error('[api] unhandled error:', err);
+
+  // Detail teknis hanya untuk lingkungan non-production agar tidak membocorkan struktur data.
+  const exposeDetail = process.env.NODE_ENV !== 'production';
   res.status(status).json({
     error: duplicate ? 'DUPLICATE_ENTRY' : foreignKey ? 'FOREIGN_KEY_VIOLATION' : 'INTERNAL_ERROR',
-    detail: err?.sqlMessage || err?.message || String(err),
+    ...(exposeDetail ? { detail: err?.sqlMessage || err?.message || String(err) } : {}),
   });
 });
 

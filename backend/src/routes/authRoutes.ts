@@ -4,6 +4,7 @@ import { exec, one } from '../db.js';
 import { clearSessionCookie, requireAuth, setSessionCookie, signSession, type SessionUser } from '../auth.js';
 import { allowedUnitIds, permissionsOf } from '../permissions.js';
 import { text } from '../http.js';
+import { LOGIN_LIMIT, blockedFor, clearFailures, loginLimitKey, recordFailure } from '../rateLimit.js';
 
 export const authRouter = Router();
 
@@ -25,13 +26,22 @@ authRouter.post('/login', async (req, res) => {
   const password = String(req.body?.password ?? '');
   if (!email || !password) return res.status(400).json({ error: 'EMAIL_PASSWORD_REQUIRED' });
 
+  const limitKey = loginLimitKey(req.ip || 'unknown', email);
+  const retryAfter = blockedFor(limitKey, LOGIN_LIMIT.max);
+  if (retryAfter > 0) {
+    res.setHeader('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'TOO_MANY_ATTEMPTS', retryAfter });
+  }
+
   const user = await one<UserRow>(
     'SELECT id,email,password_hash,full_name,role,status FROM users WHERE email=? LIMIT 1', [email],
   );
   if (!user || user.status !== 'ACTIVE' || !(await bcrypt.compare(password, user.password_hash))) {
+    recordFailure(limitKey, LOGIN_LIMIT.max, LOGIN_LIMIT.windowMs);
     return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
   }
 
+  clearFailures(limitKey);
   const session = toSession(user);
   setSessionCookie(res, signSession(session));
   res.json({ user: session, permissions: permissionsOf(user.role) });

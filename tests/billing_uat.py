@@ -66,6 +66,35 @@ def ensure_ready_unit(admin: httpx.Client, unit_id: str) -> bool:
     return admin.get(f"/api/v1/organization/units/{unit_id}/readiness").json().get("status") == "READY"
 
 
+def active_not_ready_unit(admin: httpx.Client, hierarchy: dict, suffix: str):
+    """Buat unit ACTIVE yang kesiapan keuangannya belum READY (deterministik untuk UAT)."""
+    levels = {level["code"]: level["id"] for level in hierarchy["levels"]}
+    location = hierarchy["locations"][0]["id"]
+    year = hierarchy["academicYears"][0]["id"]
+    stamp = str(int(time.time()))[-6:]
+
+    school = admin.post("/api/v1/organization/official-schools", json={
+        "name": f"Sekolah Uji {stamp}", "educationLevelId": levels["SD"], "npsn": f"9{stamp}0",
+    })
+    if school.status_code != 201:
+        return None
+    unit = admin.post("/api/v1/organization/units", json={
+        "unitCode": f"NR{stamp[-4:]}", "unitName": f"Unit Belum Siap {stamp[-4:]}",
+        "educationLevelId": levels["SD"], "officialSchoolId": school.json()["id"],
+        "locationId": location, "defaultAcademicYearId": year,
+        "address": "Jl. Uji Kesiapan", "effectiveStart": "2026-07-01",
+    })
+    if unit.status_code != 201:
+        return None
+    unit_id = unit.json()["id"]
+    if admin.post(f"/api/v1/organization/units/{unit_id}/activate", json={"reason": "UAT billing"}).status_code != 200:
+        return None
+    detail = admin.get(f"/api/v1/organization/units/{unit_id}").json()
+    if detail.get("operational_status") != "ACTIVE" or detail.get("finance_status") == "READY":
+        return None
+    return detail
+
+
 def main() -> int:
     admin = httpx.Client(base_url=BASE, timeout=30)
     r = admin.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
@@ -124,8 +153,10 @@ def main() -> int:
     check("tarif yang baru dibuat masuk perhitungan",
           any(s.get("feeTypeId") == fee_type_id for s in body.get("schemes", [])), len(body.get("schemes", [])))
 
-    # Unit belum siap
-    not_ready = next((u for u in hierarchy["units"] if u["finance_status"] != "READY" and u["id"] != unit_id), None)
+    # Unit belum siap (aktif tapi finance belum READY)
+    not_ready = active_not_ready_unit(admin, hierarchy, SUFFIX)
+    check("unit aktif tapi belum READY tersedia", not_ready is not None,
+          not_ready.get("finance_status") if not_ready else None)
     if not_ready:
         blocked = admin.post("/api/v1/billing-runs/preview", json={**payload, "unitId": not_ready["id"], "periodLabel": f"X{SUFFIX}"})
         check("unit belum READY ditolak", blocked.status_code == 400 and blocked.json().get("error") == "UNIT_NOT_READY_FOR_BILLING", blocked.status_code)

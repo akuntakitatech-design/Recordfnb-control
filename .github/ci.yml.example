@@ -1,6 +1,9 @@
 # CATATAN: contoh workflow GitHub Actions (typecheck backend, typecheck + build frontend).
 # Aktifkan dengan memindahkan berkas ini ke .github/workflows/ci.yml
 # (PAT yang dipakai agent untuk PR tidak punya scope `workflow`, sehingga berkas workflow tidak bisa dipush otomatis).
+#
+# UAT end-to-end (butuh MariaDB + backend berjalan) dijalankan lewat `bash scripts/verify.sh`
+# setelah `ADMIN_EMAIL`/`ADMIN_PASSWORD` diisi. Job CI untuk UAT belum disertakan di contoh ini.
 name: School Control CI (monorepo)
 
 on:

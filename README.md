@@ -3,8 +3,9 @@
 Aplikasi keuangan untuk **satu badan hukum yayasan** dengan banyak jenjang dan cabang.
 Implementasi mengikuti **Blueprint Keuangan Yayasan Multiunit V1.2**.
 
-Status saat ini: **Foundation (FD-01 s.d. FD-05) + BILL-01 + FC-01 + ACC-01 + RPT-01**.
-Sisa fase blueprint: FD-06 (hardening) dan modul anggaran/unit cost.
+Status saat ini: **seluruh fase blueprint selesai** — Foundation (FD-01…FD-06), BILL-01, FC-01,
+ACC-01, dan RPT-01. Sisa fitur di luar fase awal: transfer antar rekening, anggaran & unit cost,
+pengakuan pendapatan `DEFERRED`.
 
 ## 1. Ruang lingkup Foundation
 
@@ -24,6 +25,7 @@ Sisa fase blueprint: FD-06 (hardening) dan modul anggaran/unit cost.
 | Pengeluaran | Jenis biaya (wajib akun beban), vendor, pengajuan dengan unit penanggung beban, alur Draft → Diajukan → Disetujui/Ditolak → Dibayar, pembayaran sebagian/penuh dari rekening berizin bayar, pembatalan pembayaran (VOID) dengan mutasi balik, idempotency key, maker-checker |
 | Akuntansi | Bagan akun (CoA) dengan tipe & saldo normal, jurnal otomatis dari tagihan/penerimaan/pengeluaran, jurnal manual, jurnal pembalik (reversal), neraca saldo, buku besar, rekonsiliasi subledger vs GL, periode fiskal bulanan + tutup/buka kembali (ACC-01/02/03) |
 | Laporan | Ringkasan cabang & jenjang (tagihan, penerimaan, pengeluaran, surplus, piutang, siswa), aging, status closing, posisi keuangan, aktivitas pendapatan–beban, arus kas per sumber, dan **drill-down** ke dokumen sumber — semua dibatasi scope unit pengguna |
+| Hardening | Rate limit login (5 gagal / 15 menit), header keamanan, detail error tidak dibocorkan di production, proteksi VAL-08 untuk identitas unit, dokumentasi API & traceability UAT, skrip verifikasi satu perintah |
 
 **Belum termasuk (fase berikut):** pengakuan pendapatan `DEFERRED`, lampiran/bukti dokumen,
 alokasi biaya bersama antarunit, anggaran & unit cost, integrasi & rekonsiliasi bank otomatis,
@@ -54,6 +56,7 @@ backend/
   src/db.ts · src/http.ts                 # pool & helper validasi
   src/auth.ts · src/permissions.ts        # sesi, 8 role, permission, unit scope
   src/audit.ts                            # audit trail terstruktur
+  src/rateLimit.ts                        # rate limit percobaan login (in-memory)
   src/accounting.ts                       # mesin jurnal: periode, posting, reversal, mapping
   src/routes/organizationRoutes.ts        # hierarki, master, unit, readiness, assignments
   src/routes/bankRoutes.ts                # rekening fisik + verifikasi
@@ -80,6 +83,9 @@ tests/receipt_uat.py                      # UAT FC-01 (penerimaan & kas/bank)
 tests/expense_uat.py                      # UAT FC-01 (pengeluaran & maker-checker)
 tests/accounting_uat.py                   # UAT ACC-01 (jurnal, rekonsiliasi, tutup buku)
 tests/report_uat.py                        # UAT RPT-01 (agregasi & drill-down)
+docs/API.md                               # kontrak API, permission matrix, kode error
+docs/UAT.md                               # traceability T01–T20 + hasil uji
+scripts/verify.sh                         # typecheck + build + semua suite UAT
 ```
 
 ## 4. Menjalankan lokal
@@ -114,6 +120,8 @@ Role pusat (`PIMPINAN`, `ADMIN_YAYASAN`, `FINANCE_PUSAT`, `ACCOUNTING_PUSAT`, `A
 seluruh unit. Role cabang dibatasi `user_unit_access` dan **dicek di server** pada setiap endpoint.
 
 ## 6. API utama
+
+Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **[`docs/API.md`](docs/API.md)**.
 
 | Method | Endpoint | Keterangan |
 |---|---|---|
@@ -198,53 +206,36 @@ Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 - **ACC-01** akun pada mapping tarif/jenis biaya/rekening harus ada di CoA dan bertipe sesuai (**ACC-01**); jurnal hanya seimbang debit = kredit (**ACC-02**); posting ke periode `CLOSED` ditolak dan pembukaan kembali wajib alasan + audit (**ACC-03**); koreksi memakai jurnal pembalik, jurnal posted tidak ditimpa; setiap sumber transaksi punya idempotency key (`INVOICE:<id>`, `RECEIPT:<id>`, `EXPENSE_PAYMENT:<id>`) sehingga backfill aman diulang.
 - **Rekonsiliasi** piutang subledger vs GL `1-1200`, uang muka vs penerimaan belum dialokasikan, dan kas GL vs mutasi bank + jurnal manual; selisih yang tidak dapat dijelaskan dilaporkan apa adanya.
 - **RPT-01** setiap angka ringkasan harus sama dengan hasil drill-down pada rentang & unit yang sama (tagihan, penerimaan, pengeluaran, piutang); aging wajib menjumlah ke total piutang; agregasi jenjang = agregasi unit; saldo kas laporan = saldo akun kas di buku besar; role cabang hanya menerima unit dalam scope-nya (`UNIT_FORBIDDEN` bila meminta unit lain).
+- **Hardening (FD-06)** maksimum 5 percobaan login gagal per IP+email dalam 15 menit (`429 TOO_MANY_ATTEMPTS`); login berhasil tidak dihitung; respons API memakai header keamanan dan `Cache-Control: no-store`; `detail` error hanya dikirim saat `NODE_ENV !== production`; perubahan jenjang/sekolah resmi unit yang sudah bertransaksi ditolak `409 UNIT_IDENTITY_LOCKED` (VAL-08).
 
 ## 8. Pengujian
 
+Verifikasi satu perintah (typecheck + build + semua suite UAT):
+
 ```bash
-# Backend & frontend
+ADMIN_EMAIL=admin@sekolah.test ADMIN_PASSWORD='...' bash scripts/verify.sh
+```
+
+Tanpa kredensial, skrip hanya menjalankan typecheck dan build. Rincian skenario dan
+hasil per asersi ada di **[`docs/UAT.md`](docs/UAT.md)**.
+
+Menjalankan manual:
+
+```bash
 cd backend && yarn typecheck
 cd frontend && yarn typecheck && CI=true yarn build
 
-# UAT Foundation (blueprint T01–T10 + T19) — DB lokal/staging
+# UAT (DB lokal/staging)
 BASE=http://127.0.0.1:4100 \
 ADMIN_EMAIL=admin@sekolah.test \
 ADMIN_PASSWORD='...' \
-uv run --with httpx python tests/foundation_uat.py
-
-# UAT BILL-01 (siswa, tarif, tagihan, piutang)
-BASE=http://127.0.0.1:4100 \
-ADMIN_EMAIL=admin@sekolah.test \
-ADMIN_PASSWORD='...' \
-uv run --with httpx python tests/billing_uat.py
-
-# UAT FC-01 (penerimaan, alokasi, kas & bank)
-BASE=http://127.0.0.1:4100 \
-ADMIN_EMAIL=admin@sekolah.test \
-ADMIN_PASSWORD='...' \
-uv run --with httpx python tests/receipt_uat.py
-
-# UAT FC-01 (pengeluaran, maker-checker, pembayaran)
-BASE=http://127.0.0.1:4100 \
-ADMIN_EMAIL=admin@sekolah.test \
-ADMIN_PASSWORD='...' \
-uv run --with httpx python tests/expense_uat.py
-
-# UAT ACC-01 (jurnal, rekonsiliasi, periode)
-BASE=http://127.0.0.1:4100 \
-ADMIN_EMAIL=admin@sekolah.test \
-ADMIN_PASSWORD='...' \
-uv run --with httpx python tests/accounting_uat.py
-
-# UAT RPT-01 (laporan agregasi & drill-down)
-BASE=http://127.0.0.1:4100 \
-ADMIN_EMAIL=admin@sekolah.test \
-ADMIN_PASSWORD='...' \
-uv run --with httpx python tests/report_uat.py
+uv run --with httpx python tests/foundation_uat.py   # FD-01…FD-05
+# ganti nama file: billing_uat.py · receipt_uat.py · expense_uat.py
+#                  accounting_uat.py · report_uat.py
 ```
 
-Hasil terakhir: Foundation **21/21 lulus**, BILL-01 **24/24 lulus**, FC-01 penerimaan **40/40 lulus**,
-FC-01 pengeluaran **45/45 lulus**, ACC-01 **45/45 lulus**, RPT-01 **31/31 lulus**.
+Hasil terakhir: Foundation **23/23**, BILL-01 **25/25**, FC-01 penerimaan **51/51**,
+FC-01 pengeluaran **52/52**, ACC-01 **45/45**, RPT-01 **31/31** — total **227/227 lulus**.
 Semua suite bersifat rerun-safe (kode unik per `RUN_SUFFIX`, periode unik) dan hanya untuk DB
 lokal/staging. UAT ACC-01 membuat user `ACCOUNTING_PUSAT` sendiri karena izin `journal.post`
 tidak diberikan ke Admin Yayasan (pemisahan tugas, blueprint §08).
@@ -254,7 +245,7 @@ tidak diberikan ke Admin Yayasan (pemisahan tugas, blueprint §08).
 | Fase | Cakupan |
 |---|---|
 | FD-01…FD-05 | ✅ Foundation (dokumen ini) |
-| FD-06 | Hardening, seed master final, dokumentasi API, regresi |
+| FD-06 | ✅ Hardening: rate limit login, header keamanan, VAL-08, `docs/API.md`, `docs/UAT.md`, `scripts/verify.sh` |
 | BILL-01 | ✅ Siswa, enrollment, tarif, tagihan, cicilan, piutang |
 | FC-01 | ✅ Penerimaan & alokasi, kas & bank, pengeluaran (maker-checker) |
 | ACC-01 | ✅ CoA, jurnal otomatis & manual, reversal, rekonsiliasi, tutup buku |
