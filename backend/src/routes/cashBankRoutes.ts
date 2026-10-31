@@ -33,16 +33,24 @@ cashBankRouter.get('/cash-bank/balances', requirePermission('cashbank.view'), as
     params,
   );
 
-  const assignmentRows = await query<{ bank_account_id: string; unit_id: string }>(
-    `SELECT DISTINCT bank_account_id,unit_id FROM unit_bank_account_assignments
-      WHERE status='ACTIVE' AND allow_receipt=1${allowed !== null && allowed.length ? ' AND unit_id IN (?)' : ''}`,
+  const assignmentRows = await query<{ bank_account_id: string; unit_id: string; allow_receipt: number; allow_disbursement: number }>(
+    `SELECT DISTINCT bank_account_id,unit_id,allow_receipt,allow_disbursement FROM unit_bank_account_assignments
+      WHERE status='ACTIVE'${allowed !== null && allowed.length ? ' AND unit_id IN (?)' : ''}`,
     allowed !== null && allowed.length ? [allowed] : [],
   );
   const receiptUnits = new Map<string, string[]>();
+  const disbursementUnits = new Map<string, string[]>();
   for (const row of assignmentRows) {
-    const list = receiptUnits.get(row.bank_account_id) || [];
-    list.push(row.unit_id);
-    receiptUnits.set(row.bank_account_id, list);
+    if (row.allow_receipt) {
+      const list = receiptUnits.get(row.bank_account_id) || [];
+      list.push(row.unit_id);
+      receiptUnits.set(row.bank_account_id, list);
+    }
+    if (row.allow_disbursement) {
+      const list = disbursementUnits.get(row.bank_account_id) || [];
+      list.push(row.unit_id);
+      disbursementUnits.set(row.bank_account_id, list);
+    }
   }
 
   res.json(rows.map(row => ({
@@ -51,6 +59,7 @@ cashBankRouter.get('/cash-bank/balances', requirePermission('cashbank.view'), as
     total_out: Number(row.total_out),
     balance: Number(row.total_in) - Number(row.total_out),
     receipt_unit_ids: receiptUnits.get(row.id) || [],
+    disbursement_unit_ids: disbursementUnits.get(row.id) || [],
   })));
 });
 

@@ -33,6 +33,8 @@ export type Permission =
   | 'receipt.create'
   | 'receipt.void'
   | 'cashbank.view'
+  | 'expense.view' | 'expense.create' | 'expense.manage'
+  | 'expense.approve' | 'expense.pay' | 'expense.void'
   | 'receivable.view';
 
 export type SessionUser = {
@@ -433,6 +435,7 @@ export type BankBalance = {
   total_out: number;
   balance: number;
   receipt_unit_ids: string[];
+  disbursement_unit_ids: string[];
 };
 
 export type BankMutation = {
@@ -447,4 +450,84 @@ export type BankMutation = {
   account_number: string;
   unit_code: string | null;
   unit_name: string | null;
+};
+
+/* ------------------------------------------------------------------ Pengeluaran (FC-01) */
+
+export type ExpenseCategory = {
+  id: string;
+  code: string;
+  name: string;
+  expense_account_code: string | null;
+  description: string | null;
+  status: 'ACTIVE' | 'INACTIVE';
+};
+
+export type Vendor = {
+  id: string;
+  code: string;
+  name: string;
+  npwp: string | null;
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  bank_name: string | null;
+  bank_account_number: string | null;
+  bank_account_holder: string | null;
+  status: 'ACTIVE' | 'INACTIVE';
+};
+
+export type ExpenseStatus =
+  | 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'PAID' | 'CANCELLED';
+
+export type ExpenseRow = {
+  id: string;
+  unit_id: string;
+  request_number: string;
+  request_date: string;
+  due_date: string | null;
+  payee_name: string | null;
+  description: string;
+  amount: string;
+  paid_amount: string;
+  remaining: string;
+  status: ExpenseStatus;
+  unit_code: string;
+  unit_name: string;
+  category_code: string;
+  category_name: string;
+  vendor_name: string | null;
+  created_by_name: string | null;
+  payment_count: number;
+};
+
+export type ExpensePayment = {
+  id: string;
+  payment_number: string;
+  payment_date: string;
+  method: 'CASH' | 'TRANSFER' | 'QRIS' | 'OTHER';
+  reference_number: string | null;
+  amount: string;
+  status: 'POSTED' | 'VOID';
+  void_reason: string | null;
+  bank_name: string;
+  account_number: string;
+  account_usage: 'CENTRAL' | 'DEDICATED';
+  created_by_name: string | null;
+  request_number?: string;
+  description?: string;
+  unit_code?: string;
+  unit_name?: string;
+};
+
+export type ExpenseDetail = ExpenseRow & {
+  expense_category_id: string;
+  vendor_id: string | null;
+  notes: string | null;
+  rejection_reason: string | null;
+  approved_by_name: string | null;
+  rejected_by_name: string | null;
+  expense_account_code: string | null;
+  payments: ExpensePayment[];
 };

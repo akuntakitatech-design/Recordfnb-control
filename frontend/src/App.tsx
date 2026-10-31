@@ -20,10 +20,11 @@ import { Billing } from './pages/Billing';
 import { Receivables } from './pages/Receivables';
 import { Receipts } from './pages/Receipts';
 import { CashBank } from './pages/CashBank';
+import { Expenses } from './pages/Expenses';
 
 type Page =
   | 'dashboard' | 'organization' | 'units' | 'banks' | 'readiness'
-  | 'students' | 'fees' | 'billing' | 'receivables' | 'receipts' | 'cashbank'
+  | 'students' | 'fees' | 'billing' | 'receivables' | 'receipts' | 'cashbank' | 'expenses'
   | 'users' | 'audit';
 
 type NavItem = { page: Page; label: string; icon: ReactNode; permission: Permission | null };
@@ -48,6 +49,12 @@ const NAV: NavGroup[] = [
       { page: 'billing', label: 'Tagihan', icon: <FileText size={18} />, permission: 'billing.view' },
       { page: 'receivables', label: 'Piutang', icon: <PieChart size={18} />, permission: 'receivable.view' },
       { page: 'receipts', label: 'Penerimaan', icon: <Banknote size={18} />, permission: 'receipt.view' },
+    ],
+  },
+  {
+    label: 'Pengeluaran',
+    items: [
+      { page: 'expenses', label: 'Pengeluaran', icon: <WalletCards size={18} />, permission: 'expense.view' },
     ],
   },
   {
@@ -77,6 +84,7 @@ const PAGE_TITLES: Record<Page, string> = {
   receivables: 'Piutang & Aging',
   receipts: 'Penerimaan Pembayaran',
   cashbank: 'Kas & Bank',
+  expenses: 'Pengeluaran',
   users: 'Pengguna & Akses',
   audit: 'Audit Trail',
 };
@@ -197,6 +205,7 @@ export function App() {
           {current === 'receivables' && <Receivables session={session} />}
           {current === 'receipts' && <Receipts session={session} />}
           {current === 'cashbank' && <CashBank session={session} />}
+          {current === 'expenses' && <Expenses session={session} />}
           {current === 'users' && <UsersPage session={session} />}
           {current === 'audit' && <Audit />}
         </main>

@@ -16,6 +16,7 @@ import { billingRouter } from './routes/billingRoutes.js';
 import { receivableRouter } from './routes/receivableRoutes.js';
 import { receiptRouter } from './routes/receiptRoutes.js';
 import { cashBankRouter } from './routes/cashBankRoutes.js';
+import { expenseRouter } from './routes/expenseRoutes.js';
 
 const app = express();
 app.set('trust proxy', true);
@@ -40,6 +41,7 @@ app.use('/api/v1', billingRouter);
 app.use('/api/v1', receivableRouter);
 app.use('/api/v1', receiptRouter);
 app.use('/api/v1', cashBankRouter);
+app.use('/api/v1', expenseRouter);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'ENDPOINT_NOT_FOUND' }));
 

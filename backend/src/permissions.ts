@@ -25,6 +25,12 @@ export type Permission =
   | 'receipt.create'
   | 'receipt.void'
   | 'cashbank.view'
+  | 'expense.view'
+  | 'expense.create'
+  | 'expense.manage'
+  | 'expense.approve'
+  | 'expense.pay'
+  | 'expense.void'
   | 'user.manage'
   | 'audit.view'
   | 'report.view'
@@ -46,39 +52,44 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
     'unit.view', 'bank.view', 'report.view', 'audit.view', 'approval.act',
     'student.view', 'fee.view', 'billing.view', 'receivable.view',
     'receipt.view', 'cashbank.view',
+    'expense.view', 'expense.approve',
   ],
   ADMIN_YAYASAN: [
     'entity.manage', 'unit.view', 'unit.create', 'unit.edit', 'unit.activate', 'unit.deactivate',
     'unit.finance', 'bank.view', 'bank.manage', 'bank.assign', 'user.manage', 'audit.view', 'report.view',
     'student.view', 'student.manage', 'fee.view', 'fee.manage', 'billing.view', 'billing.generate',
     'invoice.void', 'receivable.view', 'receipt.view', 'receipt.create', 'receipt.void', 'cashbank.view',
+    'expense.view', 'expense.create', 'expense.manage', 'expense.approve', 'expense.pay', 'expense.void',
   ],
   FINANCE_PUSAT: [
     'unit.view', 'bank.view', 'bank.manage', 'bank.assign', 'report.view',
     'student.view', 'fee.view', 'billing.view', 'billing.generate', 'invoice.void', 'receivable.view',
     'receipt.view', 'receipt.create', 'receipt.void', 'cashbank.view',
+    'expense.view', 'expense.create', 'expense.manage', 'expense.approve', 'expense.pay', 'expense.void',
   ],
   ACCOUNTING_PUSAT: [
     'unit.view', 'unit.finance', 'bank.view', 'report.view', 'audit.view',
     'student.view', 'fee.view', 'fee.manage', 'billing.view', 'invoice.void', 'receivable.view',
     'receipt.view', 'receipt.void', 'cashbank.view',
+    'expense.view', 'expense.manage', 'expense.approve', 'expense.void',
   ],
   KEPALA_JENJANG: [
     'unit.view', 'report.view', 'approval.act', 'student.view', 'fee.view', 'billing.view', 'receivable.view',
-    'receipt.view', 'cashbank.view',
+    'receipt.view', 'cashbank.view', 'expense.view', 'expense.approve',
   ],
   KEPALA_CABANG: [
     'unit.view', 'report.view', 'approval.act', 'student.view', 'fee.view', 'billing.view', 'receivable.view',
-    'receipt.view', 'cashbank.view',
+    'receipt.view', 'cashbank.view', 'expense.view', 'expense.create', 'expense.approve',
   ],
   BENDAHARA_CABANG: [
     'unit.view', 'report.view', 'student.view', 'student.manage', 'fee.view',
     'billing.view', 'billing.generate', 'receivable.view',
     'receipt.view', 'receipt.create', 'cashbank.view',
+    'expense.view', 'expense.create', 'expense.pay',
   ],
   AUDITOR: [
     'unit.view', 'bank.view', 'audit.view', 'report.view', 'student.view', 'fee.view', 'billing.view',
-    'receivable.view', 'receipt.view', 'cashbank.view',
+    'receivable.view', 'receipt.view', 'cashbank.view', 'expense.view',
   ],
 };
 
