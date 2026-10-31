@@ -5,11 +5,20 @@ import { requireAuth } from '../auth.js';
 import { allowedUnitIds, canAccessUnit, requirePermission } from '../permissions.js';
 import { writeAudit } from '../audit.js';
 import { fromCents, isDateOnly, nullableText, paging, text, toCents, today, upper } from '../http.js';
+import { journalForExpensePayment, reverseJournal } from '../accounting.js';
 
 export const expenseRouter = Router();
 expenseRouter.use(requireAuth);
 
 const METHODS = ['CASH', 'TRANSFER', 'QRIS', 'OTHER'];
+
+async function isExpenseAccount(legalEntityId: string, code: string) {
+  const account = await one<any>(
+    'SELECT account_type,is_postable,status FROM accounts WHERE legal_entity_id=? AND code=?',
+    [legalEntityId, code],
+  );
+  return Boolean(account && account.account_type === 'EXPENSE' && account.is_postable && account.status === 'ACTIVE');
+}
 
 /**
  * Hitung ulang paid_amount + status pengajuan dari pembayaran yang masih POSTED.
@@ -120,16 +129,22 @@ expenseRouter.post('/expense-categories', requirePermission('expense.manage'), a
   const existing = await one('SELECT id FROM expense_categories WHERE legal_entity_id=? AND code=?', [entity.id, code]);
   if (existing) return res.status(409).json({ error: 'EXPENSE_CATEGORY_DUPLICATE' });
 
+  // ACC-01: akun beban harus ada di CoA dan bertipe EXPENSE.
+  const accountCode = nullableText(req.body?.expenseAccountCode);
+  if (accountCode && !(await isExpenseAccount(entity.id, accountCode))) {
+    return res.status(400).json({ error: 'EXPENSE_ACCOUNT_MAPPING_MISSING' });
+  }
+
   const id = randomUUID();
   await query(
     `INSERT INTO expense_categories(id,legal_entity_id,code,name,expense_account_code,description)
      VALUES(?,?,?,?,?,?)`,
-    [id, entity.id, code, name, nullableText(req.body?.expenseAccountCode), nullableText(req.body?.description)],
+    [id, entity.id, code, name, accountCode, nullableText(req.body?.description)],
   );
   await writeAudit({
     legalEntityId: entity.id, unitId: null, userId: req.user!.id, ip: req.ip || null,
     action: 'EXPENSE_CATEGORY_CREATE', entityType: 'EXPENSE_CATEGORY', entityId: id,
-    after: { code, name, expense_account_code: nullableText(req.body?.expenseAccountCode) },
+    after: { code, name, expense_account_code: accountCode },
   });
   res.status(201).json(await one('SELECT * FROM expense_categories WHERE id=?', [id]));
 });
@@ -145,6 +160,9 @@ expenseRouter.patch('/expense-categories/:id', requirePermission('expense.manage
   const description = req.body?.description === undefined ? before.description : nullableText(req.body?.description);
   const status = upper(req.body?.status) || before.status;
   if (!['ACTIVE', 'INACTIVE'].includes(status)) return res.status(400).json({ error: 'EXPENSE_CATEGORY_STATUS_INVALID' });
+  if (accountCode && !(await isExpenseAccount(before.legal_entity_id, accountCode))) {
+    return res.status(400).json({ error: 'EXPENSE_ACCOUNT_MAPPING_MISSING' });
+  }
 
   await query(
     'UPDATE expense_categories SET name=?,expense_account_code=?,description=?,status=? WHERE id=?',
@@ -615,6 +633,10 @@ expenseRouter.post('/expenses/:id/payments', requirePermission('expense.pay'), a
     );
 
     await refreshRequest(conn, existing.id);
+
+    // ACC-01: Dr Beban jenis biaya, Cr Kas/Bank.
+    await journalForExpensePayment(conn, id, req.user!.id);
+
     await conn.commit();
   } catch (error: any) {
     await conn.rollback();
@@ -669,9 +691,14 @@ expenseRouter.post('/expense-payments/:id/void', requirePermission('expense.void
       [randomUUID(), payment.legal_entity_id, payment.bank_account_id, payment.unit_id, today(),
         payment.amount, id, `Pembatalan ${payment.payment_number}`],
     );
+    await reverseJournal(conn, {
+      legalEntityId: payment.legal_entity_id, sourceType: 'EXPENSE_PAYMENT', sourceId: id,
+      reason, userId: req.user!.id,
+    });
     await conn.commit();
-  } catch (error) {
+  } catch (error: any) {
     await conn.rollback();
+    if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     throw error;
   } finally {
     conn.release();

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  Banknote, Building2, FileText, Landmark, LayoutDashboard, LogOut, PieChart, Receipt, ScrollText,
+  Banknote, Building2, Calculator, FileText, Landmark, LayoutDashboard, LogOut, PieChart, Receipt, ScrollText,
   ShieldCheck, Users, UsersRound, Wallet, WalletCards,
 } from 'lucide-react';
 import { api } from './api';
@@ -21,10 +21,11 @@ import { Receivables } from './pages/Receivables';
 import { Receipts } from './pages/Receipts';
 import { CashBank } from './pages/CashBank';
 import { Expenses } from './pages/Expenses';
+import { Accounting } from './pages/Accounting';
 
 type Page =
   | 'dashboard' | 'organization' | 'units' | 'banks' | 'readiness'
-  | 'students' | 'fees' | 'billing' | 'receivables' | 'receipts' | 'cashbank' | 'expenses'
+  | 'students' | 'fees' | 'billing' | 'receivables' | 'receipts' | 'cashbank' | 'expenses' | 'accounting'
   | 'users' | 'audit';
 
 type NavItem = { page: Page; label: string; icon: ReactNode; permission: Permission | null };
@@ -64,6 +65,12 @@ const NAV: NavGroup[] = [
     ],
   },
   {
+    label: 'Akuntansi',
+    items: [
+      { page: 'accounting', label: 'Akuntansi', icon: <Calculator size={18} />, permission: 'accounting.view' },
+    ],
+  },
+  {
     label: 'Administrasi',
     items: [
       { page: 'users', label: 'Pengguna & Akses', icon: <UsersRound size={18} />, permission: 'user.manage' },
@@ -85,6 +92,7 @@ const PAGE_TITLES: Record<Page, string> = {
   receipts: 'Penerimaan Pembayaran',
   cashbank: 'Kas & Bank',
   expenses: 'Pengeluaran',
+  accounting: 'Akuntansi',
   users: 'Pengguna & Akses',
   audit: 'Audit Trail',
 };
@@ -206,6 +214,7 @@ export function App() {
           {current === 'receipts' && <Receipts session={session} />}
           {current === 'cashbank' && <CashBank session={session} />}
           {current === 'expenses' && <Expenses session={session} />}
+          {current === 'accounting' && <Accounting session={session} />}
           {current === 'users' && <UsersPage session={session} />}
           {current === 'audit' && <Audit />}
         </main>

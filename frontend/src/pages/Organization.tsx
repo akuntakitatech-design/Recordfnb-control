@@ -408,6 +408,7 @@ export function StatusBadge({ value }: { value: string }) {
     POSTED: 'success', APPROVED: 'success', PAID: 'success',
     SUBMITTED: 'info', PARTIAL: 'warning', REJECTED: 'danger',
     CANCELLED: 'neutral', VOID: 'danger', ISSUED: 'info',
+    OPEN: 'success', CLOSED: 'neutral', REVERSED: 'warning',
   };
   return <span className={`badge ${map[value] || 'neutral'}`}>{value}</span>;
 }

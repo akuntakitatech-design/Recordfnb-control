@@ -103,12 +103,20 @@ def main() -> int:
 
     # Master jenis biaya
     category = admin.post("/api/v1/expense-categories", json={
-        "code": f"OPX{SUFFIX}", "name": f"Operasional UAT {SUFFIX}", "expenseAccountCode": "5-9100",
+        "code": f"OPX{SUFFIX}", "name": f"Operasional UAT {SUFFIX}", "expenseAccountCode": "5-2100",
     })
     check("jenis biaya dibuat", category.status_code == 201, category.text[:90])
     if category.status_code != 201:
         return summary()
     category_id = category.json()["id"]
+
+    invalid_account = admin.post("/api/v1/expense-categories", json={
+        "code": f"BAD{SUFFIX}", "name": f"Akun Salah {SUFFIX}", "expenseAccountCode": "9-9999",
+    })
+    check("akun beban di luar CoA ditolak",
+          invalid_account.status_code == 400
+          and invalid_account.json().get("error") == "EXPENSE_ACCOUNT_MAPPING_MISSING",
+          (invalid_account.status_code, invalid_account.text[:70]))
 
     incomplete_category = admin.post("/api/v1/expense-categories", json={
         "code": f"NAC{SUFFIX}", "name": f"Tanpa Akun {SUFFIX}",

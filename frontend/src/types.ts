@@ -35,6 +35,7 @@ export type Permission =
   | 'cashbank.view'
   | 'expense.view' | 'expense.create' | 'expense.manage'
   | 'expense.approve' | 'expense.pay' | 'expense.void'
+  | 'accounting.view' | 'journal.post' | 'period.close' | 'coa.manage'
   | 'receivable.view';
 
 export type SessionUser = {
@@ -530,4 +531,108 @@ export type ExpenseDetail = ExpenseRow & {
   rejected_by_name: string | null;
   expense_account_code: string | null;
   payments: ExpensePayment[];
+};
+
+/* ------------------------------------------------------------------ Akuntansi (ACC-01) */
+
+export type Account = {
+  id: string;
+  code: string;
+  name: string;
+  account_type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE';
+  normal_balance: 'DEBIT' | 'CREDIT';
+  parent_id: string | null;
+  is_postable: number;
+  status: 'ACTIVE' | 'INACTIVE';
+};
+
+export type FiscalPeriod = {
+  id: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+  status: 'OPEN' | 'CLOSED';
+  closed_at: string | null;
+  reopened_at: string | null;
+  reopen_reason: string | null;
+  closed_by_name: string | null;
+};
+
+export type JournalEntryRow = {
+  id: string;
+  entry_number: string;
+  entry_date: string;
+  description: string;
+  source_type: string;
+  source_id: string | null;
+  entry_kind: 'ORIGINAL' | 'REVERSAL';
+  status: 'POSTED' | 'REVERSED';
+  unit_code: string | null;
+  unit_name: string | null;
+  created_by_name: string | null;
+  total_debit: string;
+};
+
+export type JournalLine = {
+  id: string;
+  line_no: number;
+  description: string | null;
+  debit: string;
+  credit: string;
+  account_code: string;
+  account_name: string;
+  account_type: string;
+  unit_code: string | null;
+  unit_name: string | null;
+};
+
+export type JournalEntryDetail = JournalEntryRow & {
+  period_name: string;
+  lines: JournalLine[];
+};
+
+export type TrialBalanceItem = {
+  code: string;
+  name: string;
+  account_type: string;
+  normal_balance: 'DEBIT' | 'CREDIT';
+  debit: number;
+  credit: number;
+  balance: number;
+};
+
+export type TrialBalance = {
+  from: string;
+  to: string;
+  items: TrialBalanceItem[];
+  totalDebit: number;
+  totalCredit: number;
+  balanced: boolean;
+};
+
+export type Reconciliation = {
+  asOf: string;
+  receivable: { gl: number; subledger: number; difference: number };
+  deposit: { gl: number; subledger: number; difference: number };
+  cash: {
+    gl: number; mutations: number; manualAdjustments: number;
+    difference: number; unexplained: number;
+  };
+  balanced: boolean;
+};
+
+export type LedgerRow = {
+  id: string;
+  entry_id: string;
+  entry_number: string;
+  entry_date: string;
+  entry_description: string;
+  source_type: string;
+  account_code: string;
+  account_name: string;
+  description: string | null;
+  debit: string;
+  credit: string;
+  unit_code: string | null;
+  unit_name: string | null;
 };

@@ -17,6 +17,15 @@ async function activeEntityId(): Promise<string | null> {
   return entity?.id || null;
 }
 
+/** ACC-01: akun pendapatan harus ada di CoA dan bertipe REVENUE. */
+async function isRevenueAccount(legalEntityId: string, code: string) {
+  const account = await one<any>(
+    'SELECT account_type,is_postable,status FROM accounts WHERE legal_entity_id=? AND code=?',
+    [legalEntityId, code],
+  );
+  return Boolean(account && account.account_type === 'REVENUE' && account.is_postable && account.status === 'ACTIVE');
+}
+
 /* ------------------------------------------------------------------ Jenis biaya */
 
 feeRouter.get('/fee-types', requirePermission('fee.view'), async (_req, res) => {
@@ -39,10 +48,15 @@ feeRouter.post('/fee-types', requirePermission('fee.manage'), async (req, res) =
     return res.status(409).json({ error: 'FEE_TYPE_CODE_DUPLICATE' });
   }
 
+  const revenueAccountCode = nullableText(req.body?.revenueAccountCode);
+  if (revenueAccountCode && !(await isRevenueAccount(entityId, revenueAccountCode))) {
+    return res.status(400).json({ error: 'ACCOUNT_MAPPING_MISSING' });
+  }
+
   const id = randomUUID();
   await exec(
     'INSERT INTO fee_types(id,legal_entity_id,code,name,description,revenue_account_code,recognition_mode) VALUES(?,?,?,?,?,?,?)',
-    [id, entityId, code, name, nullableText(req.body?.description), nullableText(req.body?.revenueAccountCode), recognition],
+    [id, entityId, code, name, nullableText(req.body?.description), revenueAccountCode, recognition],
   );
   const after = await one('SELECT * FROM fee_types WHERE id=?', [id]);
   await writeAudit({
@@ -65,11 +79,15 @@ feeRouter.patch('/fee-types/:id', requirePermission('fee.manage'), async (req, r
     return res.status(409).json({ error: 'FEE_TYPE_CODE_DUPLICATE' });
   }
 
+  const revenueAccountCode = nullableText(req.body?.revenueAccountCode ?? before.revenue_account_code);
+  if (revenueAccountCode && !(await isRevenueAccount(before.legal_entity_id, revenueAccountCode))) {
+    return res.status(400).json({ error: 'ACCOUNT_MAPPING_MISSING' });
+  }
+
   await exec(
     'UPDATE fee_types SET code=?, name=?, description=?, revenue_account_code=?, recognition_mode=?, status=? WHERE id=?',
     [code, name, nullableText(req.body?.description ?? before.description),
-      nullableText(req.body?.revenueAccountCode ?? before.revenue_account_code),
-      recognition, upper(req.body?.status) || before.status, id],
+      revenueAccountCode, recognition, upper(req.body?.status) || before.status, id],
   );
   const after = await one('SELECT * FROM fee_types WHERE id=?', [id]);
   await writeAudit({

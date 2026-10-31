@@ -5,6 +5,7 @@ import { requireAuth } from '../auth.js';
 import { allowedUnitIds, canAccessUnit, requirePermission } from '../permissions.js';
 import { writeAudit } from '../audit.js';
 import { addMonths, fromCents, isDateOnly, paging, text, toCents, upper } from '../http.js';
+import { journalForInvoice, reverseJournal } from '../accounting.js';
 
 export const billingRouter = Router();
 billingRouter.use(requireAuth);
@@ -201,12 +202,16 @@ billingRouter.post('/billing-runs/generate', requirePermission('billing.generate
           [randomUUID(), invoiceId, chunkIndex + 1, addMonths(input.dueDate, chunkIndex), fromCents(cents)],
         );
       }
+
+      // ACC-01: Dr Piutang, Cr Pendapatan per jenis biaya (idempoten per invoice).
+      await journalForInvoice(conn, invoiceId, req.user!.id);
       invoiceCount += 1;
     }
 
     await conn.commit();
   } catch (error: any) {
     await conn.rollback();
+    if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     if (error?.errno === 1062 || error?.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'BILLING_RUN_DUPLICATE' });
     }
@@ -313,9 +318,14 @@ billingRouter.post('/invoices/:id/void', requirePermission('invoice.void'), asyn
     await conn.beginTransaction();
     await conn.query("UPDATE invoices SET status='VOID', void_reason=? WHERE id=?", [reason, id]);
     await conn.query("UPDATE invoice_installments SET status='VOID' WHERE invoice_id=?", [id]);
+    await reverseJournal(conn, {
+      legalEntityId: invoice.legal_entity_id, sourceType: 'INVOICE', sourceId: id,
+      reason, userId: req.user!.id,
+    });
     await conn.commit();
-  } catch (error) {
+  } catch (error: any) {
     await conn.rollback();
+    if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     throw error;
   } finally {
     conn.release();

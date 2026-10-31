@@ -5,6 +5,7 @@ import { requireAuth } from '../auth.js';
 import { allowedUnitIds, canAccessUnit, requirePermission } from '../permissions.js';
 import { writeAudit } from '../audit.js';
 import { fromCents, isDateOnly, nullableText, paging, text, toCents, upper } from '../http.js';
+import { journalForReceipt, reverseJournal } from '../accounting.js';
 
 export const receiptRouter = Router();
 receiptRouter.use(requireAuth);
@@ -235,6 +236,9 @@ receiptRouter.post('/receipts', requirePermission('receipt.create'), async (req,
         `Penerimaan ${receiptNumber}`],
     );
 
+    // ACC-01: Dr Kas/Bank, Cr Piutang / Uang Muka.
+    await journalForReceipt(conn, id, req.user!.id);
+
     await conn.commit();
   } catch (error: any) {
     await conn.rollback();
@@ -288,9 +292,14 @@ receiptRouter.post('/receipts/:id/void', requirePermission('receipt.void'), asyn
         new Date().toISOString().slice(0, 10), receipt.total_amount, id,
         `Pembatalan ${receipt.receipt_number}`],
     );
+    await reverseJournal(conn, {
+      legalEntityId: receipt.legal_entity_id, sourceType: 'RECEIPT', sourceId: id,
+      reason, userId: req.user!.id,
+    });
     await conn.commit();
-  } catch (error) {
+  } catch (error: any) {
     await conn.rollback();
+    if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     throw error;
   } finally {
     conn.release();
