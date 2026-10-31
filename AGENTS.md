@@ -8,7 +8,7 @@ Tujuan dokumen ini satu: **alur kerja mulus, 0 regresi, semua perubahan masuk le
 |---|---|---|---|---|---|
 | Adm-Perkebunan (Payroll) | `Adm-Perkebunan` | Node/Express | `backend-perkebunan:3000` | `media-admperkebunan` | (lihat Coolify) |
 | KelolaKita Procurement | `Procurment-app` | FastAPI | `backend-procurement:8000` | `media-procurmentapp` | `proc.akuntakita.com` |
-| Record F&B Control | `Recordfnb-control` | Node/Express | `backend-fnb:3000` | `media-recordfnb` | `record.akuntakita.com` |
+| Record F&B Control → **School Control (rewrite v0.1)** | `Recordfnb-control` | Node/Express | `backend-school:3000` | – (belum ada upload) | `record.akuntakita.com` (menunggu keputusan) |
 
 Setiap repo punya **PAT fine-grained sendiri** (diberikan pemilik lewat file `CredProd*.txt`). Ringkasan 10 detik di §0, dua prompt standar pemilik di §6.
 

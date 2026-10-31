@@ -1,7 +1,7 @@
-# CATATAN: ini contoh workflow GitHub Actions (typecheck + test backend, typecheck + build frontend).
+# CATATAN: contoh workflow GitHub Actions (typecheck backend, typecheck + build frontend).
 # Aktifkan dengan memindahkan berkas ini ke .github/workflows/ci.yml
 # (PAT yang dipakai agent untuk PR tidak punya scope `workflow`, sehingga berkas workflow tidak bisa dipush otomatis).
-name: F&B Control CI (monorepo)
+name: School Control CI (monorepo)
 
 on:
   push:
@@ -23,8 +23,6 @@ jobs:
           cache: yarn
           cache-dependency-path: backend/yarn.lock
       - run: yarn install --frozen-lockfile
-      - name: Unit test (engine matematika & parser)
-        run: yarn test
       - name: Typecheck
         run: yarn typecheck
 
