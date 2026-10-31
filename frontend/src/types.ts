@@ -25,7 +25,11 @@ export const ROLE_LABEL: Record<Role, string> = {
 export type Permission =
   | 'entity.manage' | 'unit.view' | 'unit.create' | 'unit.edit' | 'unit.activate' | 'unit.deactivate'
   | 'unit.finance' | 'bank.view' | 'bank.manage' | 'bank.assign' | 'user.manage'
-  | 'audit.view' | 'report.view' | 'approval.act';
+  | 'audit.view' | 'report.view' | 'approval.act'
+  | 'student.view' | 'student.manage'
+  | 'fee.view' | 'fee.manage'
+  | 'billing.view' | 'billing.generate' | 'invoice.void'
+  | 'receivable.view';
 
 export type SessionUser = {
   id: string;
@@ -199,4 +203,165 @@ export type Hierarchy = {
   locations: SchoolLocation[];
   academicYears: AcademicYear[];
   units: { id: string; unit_code: string; unit_name: string; operational_status: string; finance_status: string; education_level_id: string; level_name: string }[];
+};
+
+/* ------------------------------------------------------------------ BILL-01 */
+
+export type StudentRow = {
+  id: string;
+  nis: string;
+  nisn: string | null;
+  full_name: string;
+  gender: 'L' | 'P' | null;
+  birth_date?: string | null;
+  guardian_name: string | null;
+  guardian_phone: string | null;
+  address?: string | null;
+  status: 'ACTIVE' | 'INACTIVE';
+  enrollment_id: string;
+  unit_id: string;
+  unit_code: string;
+  unit_name: string;
+  academic_year_id: string;
+  academic_year_name: string;
+  class_label: string | null;
+  effective_start: string;
+};
+
+export type Enrollment = {
+  id: string;
+  unit_id: string;
+  unit_code: string;
+  unit_name: string;
+  academic_year_id: string;
+  academic_year_name: string;
+  class_label: string | null;
+  effective_start: string;
+  effective_end: string | null;
+  status: string;
+};
+
+export type FeeType = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  revenue_account_code: string | null;
+  recognition_mode: 'IMMEDIATE' | 'DEFERRED';
+  status: string;
+};
+
+export type FeeScheme = {
+  id: string;
+  unit_id: string;
+  unit_code: string;
+  unit_name: string;
+  academic_year_id: string;
+  academic_year_name: string;
+  fee_type_id: string;
+  fee_code: string;
+  fee_name: string;
+  name: string;
+  amount: string;
+  frequency: 'MONTHLY' | 'ANNUAL' | 'ONE_TIME';
+  installment_count: number;
+  due_day: number | null;
+  effective_start: string;
+  effective_end: string | null;
+  status: string;
+};
+
+export type BillingPreview = {
+  unit: { id: string; unit_code: string; unit_name: string };
+  academicYear: string;
+  periodLabel: string;
+  invoiceDate: string;
+  dueDate: string;
+  alreadyGenerated: boolean;
+  studentCount: number;
+  installmentCount: number;
+  schemes: { feeTypeId: string; feeCode: string; feeName: string; name: string; amount: number; frequency: string; installmentCount: number }[];
+  totalPerStudent: number;
+  grandTotal: number;
+  students: { id: string; nis: string; full_name: string; class_label: string | null }[];
+};
+
+export type BillingRun = {
+  id: string;
+  period_label: string;
+  invoice_date: string;
+  due_date: string;
+  status: string;
+  student_count: number;
+  invoice_count: number;
+  total_amount: string;
+  created_at: string;
+  unit_code: string;
+  unit_name: string;
+  academic_year_name: string;
+  created_by_name: string | null;
+};
+
+export type InvoiceRow = {
+  id: string;
+  invoice_number: string;
+  period_label: string;
+  invoice_date: string;
+  due_date: string;
+  total_amount: string;
+  paid_amount: string;
+  outstanding: string;
+  status: 'ISSUED' | 'PARTIAL' | 'PAID' | 'VOID';
+  student_id: string;
+  full_name: string;
+  nis: string;
+  unit_code: string;
+  unit_name: string;
+};
+
+export type InvoiceDetail = InvoiceRow & {
+  guardian_name: string | null;
+  academic_year_name: string;
+  void_reason: string | null;
+  lines: { id: string; fee_type_id: string; description: string; amount: string; sort_order: number }[];
+  installments: { id: string; sequence: number; due_date: string; amount: string; paid_amount: string; status: string }[];
+};
+
+export type StudentDetail = {
+  student: {
+    id: string; nis: string; nisn: string | null; full_name: string; gender: 'L' | 'P' | null;
+    birth_date: string | null; guardian_name: string | null; guardian_phone: string | null;
+    address: string | null; status: string;
+  };
+  enrollment: Enrollment | null;
+  enrollments: Enrollment[];
+  invoices: InvoiceRow[];
+};
+
+export type ReceivableItem = {
+  id: string;
+  invoice_number: string;
+  period_label: string;
+  due_date: string;
+  total_amount: string;
+  paid_amount: string;
+  outstanding: number;
+  status: string;
+  student_id: string;
+  full_name: string;
+  nis: string;
+  unit_id: string;
+  unit_code: string;
+  unit_name: string;
+  aging_bucket: 'CURRENT' | 'D1_30' | 'D31_60' | 'D61_PLUS';
+  days_overdue: number;
+};
+
+export type ReceivableSummary = {
+  today: string;
+  totalOutstanding: number;
+  invoiceCount: number;
+  aging: { CURRENT: number; D1_30: number; D31_60: number; D61_PLUS: number };
+  byUnit: { unit_id: string; unit_code: string; unit_name: string; outstanding: number; invoices: number }[];
+  items: ReceivableItem[];
 };

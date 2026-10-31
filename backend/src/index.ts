@@ -10,6 +10,10 @@ import { organizationRouter } from './routes/organizationRoutes.js';
 import { bankRouter } from './routes/bankRoutes.js';
 import { userRouter } from './routes/userRoutes.js';
 import { dashboardRouter } from './routes/dashboardRoutes.js';
+import { studentRouter } from './routes/studentRoutes.js';
+import { feeRouter } from './routes/feeRoutes.js';
+import { billingRouter } from './routes/billingRoutes.js';
+import { receivableRouter } from './routes/receivableRoutes.js';
 
 const app = express();
 app.set('trust proxy', true);
@@ -28,6 +32,10 @@ app.use('/api/v1/organization', organizationRouter);
 app.use('/api/v1', bankRouter);
 app.use('/api/v1', userRouter);
 app.use('/api/v1', dashboardRouter);
+app.use('/api/v1', studentRouter);
+app.use('/api/v1', feeRouter);
+app.use('/api/v1', billingRouter);
+app.use('/api/v1', receivableRouter);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'ENDPOINT_NOT_FOUND' }));
 

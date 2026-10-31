@@ -3,8 +3,8 @@
 Aplikasi keuangan untuk **satu badan hukum yayasan** dengan banyak jenjang dan cabang.
 Implementasi mengikuti **Blueprint Keuangan Yayasan Multiunit V1.2**.
 
-Status saat ini: **Foundation (FD-01 s.d. FD-05) + audit trail**. Modul tagihan, penerimaan,
-pengeluaran, dan akuntansi menyusul pada fase berikutnya.
+Status saat ini: **Foundation (FD-01 s.d. FD-05) + BILL-01** (siswa, tarif, tagihan, piutang).
+Modul penerimaan, pengeluaran, dan akuntansi menyusul pada fase berikutnya.
 
 ## 1. Ruang lingkup Foundation
 
@@ -16,9 +16,12 @@ pengeluaran, dan akuntansi menyusul pada fase berikutnya.
 | Kesiapan keuangan | Checklist per unit (identitas, mapping akun, rekening aktif & terverifikasi) → `READY` / `NOT_CONFIGURED` |
 | Akses | Role pusat & cabang, scope unit per pengguna, permission per aksi |
 | Audit | Semua perubahan konfigurasi tercatat (`before`/`after`, aktor, alasan, IP) |
+| Siswa & penempatan | Master siswa per yayasan, riwayat penempatan unit/tahun ajaran (pernah pindah unit tetap tercatat) |
+| Tarif | Jenis biaya (+akun pendapatan, mode pengakuan), tarif per unit/tahun ajaran dengan masa berlaku, frekuensi, dan jumlah angsuran |
+| Tagihan & piutang | Generate tagihan per unit + periode (idempoten), rincian per jenis biaya, angsuran, daftar tagihan, pembatalan (VOID), piutang + aging |
 
-**Belum termasuk (fase berikut):** siswa & enrollment, tarif, tagihan/piutang, penerimaan &
-alokasi pembayaran, pengeluaran, jurnal umum, tutup buku, laporan yayasan, integrasi bank.
+**Belum termasuk (fase berikut):** penerimaan & alokasi pembayaran (FC-01), pengeluaran,
+jurnal umum & tutup buku (ACC-01), laporan yayasan (RPT-01), integrasi bank.
 
 ## 2. Tech stack
 
@@ -44,12 +47,18 @@ backend/
   src/routes/organizationRoutes.ts        # hierarki, master, unit, readiness, assignments
   src/routes/bankRoutes.ts                # rekening fisik + verifikasi
   src/routes/userRoutes.ts                # pengguna, scope unit, audit log global
+  src/routes/studentRoutes.ts             # siswa + penempatan unit
+  src/routes/feeRoutes.ts                 # jenis biaya + tarif per unit
+  src/routes/billingRoutes.ts             # billing run, invoice, void
+  src/routes/receivableRoutes.ts          # piutang + aging
   src/routes/dashboardRoutes.ts
 frontend/
   src/App.tsx                             # shell + menu per permission
   src/pages/Dashboard.tsx · Organization.tsx · Units.tsx
   src/pages/BankAccounts.tsx · Readiness.tsx · Users.tsx · Audit.tsx
+  src/pages/Students.tsx · Fees.tsx · Billing.tsx · Receivables.tsx
 tests/foundation_uat.py                   # UAT T01–T10 + T19 (blueprint)
+tests/billing_uat.py                      # UAT BILL-01 (tagihan & piutang)
 ```
 
 ## 4. Menjalankan lokal
@@ -102,6 +111,16 @@ seluruh unit. Role cabang dibatasi `user_unit_access` dan **dicek di server** pa
 | PUT | `/api/v1/users/{id}/units` | Scope unit |
 | GET | `/api/v1/audit-logs` | Jejak audit (filter entitas) |
 | GET | `/api/v1/dashboard` | Ringkasan yayasan |
+| GET/POST/PATCH | `/api/v1/students[/{id}]` | Siswa + penempatan unit |
+| POST | `/api/v1/students/{id}/enrollments` | Pindah unit / tahun ajaran (histori tetap) |
+| GET/POST/PATCH | `/api/v1/fee-types[/{id}]` | Jenis biaya |
+| GET/POST/PATCH | `/api/v1/fee-schemes[/{id}]` | Tarif per unit & tahun ajaran |
+| GET | `/api/v1/billing-runs` | Riwayat generate tagihan |
+| POST | `/api/v1/billing-runs/preview` | Pratinjau tagihan (siswa, tarif, total) |
+| POST | `/api/v1/billing-runs/generate` | Terbitkan tagihan (idempoten per unit+tahun+periode) |
+| GET | `/api/v1/invoices`, `/api/v1/invoices/{id}` | Daftar & rincian tagihan |
+| POST | `/api/v1/invoices/{id}/void` | Batalkan tagihan (alasan wajib, tanpa hapus data) |
+| GET | `/api/v1/receivables` | Piutang + aging per unit |
 
 Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 `UNIT_FINANCE_NOT_READY`, `BANK_ACCOUNT_NOT_ALLOWED`, `BANK_ACCOUNT_DEDICATED_CONFLICT`,
@@ -120,6 +139,7 @@ Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 - **BANK-04** default penerimaan/pengeluaran tidak boleh ganda pada periode yang sama.
 - **ACC-01** mapping akun piutang & pendapatan wajib untuk status `READY`.
 - **Audit** perubahan konfigurasi mencatat before/after, aktor, alasan, IP.
+- **BILL-01** tagihan hanya untuk unit `ACTIVE` + `finance_status=READY`; duplikat unit+tahun+periode ditolak; pembatalan hanya bila belum ada pembayaran; nilai uang dihitung dalam sen agar pembagian angsuran deterministik.
 
 ## 8. Pengujian
 
@@ -133,9 +153,15 @@ BASE=http://127.0.0.1:4100 \
 ADMIN_EMAIL=admin@sekolah.test \
 ADMIN_PASSWORD='...' \
 uv run --with httpx python tests/foundation_uat.py
+
+# UAT BILL-01 (siswa, tarif, tagihan, piutang)
+BASE=http://127.0.0.1:4100 \
+ADMIN_EMAIL=admin@sekolah.test \
+ADMIN_PASSWORD='...' \
+uv run --with httpx python tests/billing_uat.py
 ```
 
-Hasil terakhir: **20/20 lulus**.
+Hasil terakhir: Foundation **20/20 lulus**, BILL-01 **23/23 lulus**.
 
 ## 9. Roadmap sesuai blueprint
 
@@ -143,7 +169,7 @@ Hasil terakhir: **20/20 lulus**.
 |---|---|
 | FD-01…FD-05 | ✅ Foundation (dokumen ini) |
 | FD-06 | Hardening, seed master final, dokumentasi API, regresi |
-| BILL-01 | Siswa, enrollment, tarif, tagihan, cicilan, piutang |
+| BILL-01 | ✅ Siswa, enrollment, tarif, tagihan, cicilan, piutang |
 | FC-01 | Penerimaan, alokasi pembayaran, pengeluaran, kas & bank |
 | ACC-01 | Jurnal umum, rekonsiliasi, tutup buku |
 | RPT-01 | Dashboard cabang/jenjang/yayasan + drill-down |

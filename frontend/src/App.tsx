@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  Building2, Landmark, LayoutDashboard, LogOut, ScrollText, ShieldCheck, UsersRound, WalletCards,
+  Building2, FileText, Landmark, LayoutDashboard, LogOut, PieChart, Receipt, ScrollText,
+  ShieldCheck, Users, UsersRound, WalletCards,
 } from 'lucide-react';
 import { api } from './api';
 import { ROLE_LABEL, type LegalEntity, type Permission, type Session } from './types';
@@ -11,21 +12,48 @@ import { Organization } from './pages/Organization';
 import { Units } from './pages/Units';
 import { BankAccounts } from './pages/BankAccounts';
 import { Readiness } from './pages/Readiness';
-import { Users } from './pages/Users';
+import { Users as UsersPage } from './pages/Users';
 import { Audit } from './pages/Audit';
+import { Students } from './pages/Students';
+import { Fees } from './pages/Fees';
+import { Billing } from './pages/Billing';
+import { Receivables } from './pages/Receivables';
 
-type Page = 'dashboard' | 'organization' | 'units' | 'banks' | 'readiness' | 'users' | 'audit';
+type Page =
+  | 'dashboard' | 'organization' | 'units' | 'banks' | 'readiness'
+  | 'students' | 'fees' | 'billing' | 'receivables'
+  | 'users' | 'audit';
 
 type NavItem = { page: Page; label: string; icon: ReactNode; permission: Permission | null };
+type NavGroup = { label: string; items: NavItem[] };
 
-const NAV: NavItem[] = [
-  { page: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} />, permission: null },
-  { page: 'organization', label: 'Master Organisasi', icon: <Building2 size={18} />, permission: 'unit.view' },
-  { page: 'units', label: 'Unit & Cabang', icon: <ShieldCheck size={18} />, permission: 'unit.view' },
-  { page: 'banks', label: 'Rekening & Mapping', icon: <Landmark size={18} />, permission: 'bank.view' },
-  { page: 'readiness', label: 'Kesiapan Keuangan', icon: <WalletCards size={18} />, permission: 'unit.view' },
-  { page: 'users', label: 'Pengguna & Akses', icon: <UsersRound size={18} />, permission: 'user.manage' },
-  { page: 'audit', label: 'Audit Trail', icon: <ScrollText size={18} />, permission: 'audit.view' },
+const NAV: NavGroup[] = [
+  {
+    label: 'Organisasi',
+    items: [
+      { page: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} />, permission: null },
+      { page: 'organization', label: 'Master Organisasi', icon: <Building2 size={18} />, permission: 'unit.view' },
+      { page: 'units', label: 'Unit & Cabang', icon: <ShieldCheck size={18} />, permission: 'unit.view' },
+      { page: 'banks', label: 'Rekening & Mapping', icon: <Landmark size={18} />, permission: 'bank.view' },
+      { page: 'readiness', label: 'Kesiapan Keuangan', icon: <WalletCards size={18} />, permission: 'unit.view' },
+    ],
+  },
+  {
+    label: 'Billing & Piutang',
+    items: [
+      { page: 'students', label: 'Siswa', icon: <Users size={18} />, permission: 'student.view' },
+      { page: 'fees', label: 'Tarif', icon: <Receipt size={18} />, permission: 'fee.view' },
+      { page: 'billing', label: 'Tagihan', icon: <FileText size={18} />, permission: 'billing.view' },
+      { page: 'receivables', label: 'Piutang', icon: <PieChart size={18} />, permission: 'receivable.view' },
+    ],
+  },
+  {
+    label: 'Administrasi',
+    items: [
+      { page: 'users', label: 'Pengguna & Akses', icon: <UsersRound size={18} />, permission: 'user.manage' },
+      { page: 'audit', label: 'Audit Trail', icon: <ScrollText size={18} />, permission: 'audit.view' },
+    ],
+  },
 ];
 
 const PAGE_TITLES: Record<Page, string> = {
@@ -34,6 +62,10 @@ const PAGE_TITLES: Record<Page, string> = {
   units: 'Unit & Cabang',
   banks: 'Rekening & Mapping',
   readiness: 'Kesiapan Keuangan',
+  students: 'Data Siswa',
+  fees: 'Jenis Biaya & Tarif',
+  billing: 'Tagihan Siswa',
+  receivables: 'Piutang & Aging',
   users: 'Pengguna & Akses',
   audit: 'Audit Trail',
 };
@@ -61,15 +93,25 @@ export function App() {
     api<LegalEntity>('/api/v1/organization/legal-entity').then(setEntity).catch(() => setEntity(null));
   }, [session, page]);
 
-  const items = useMemo(() => {
-    if (!session) return [] as NavItem[];
-    return NAV.filter(item => item.permission === null || session.permissions.includes(item.permission));
+  const groups = useMemo(() => {
+    if (!session) return [] as NavGroup[];
+    return NAV
+      .map(group => ({
+        ...group,
+        items: group.items.filter(item => item.permission === null || session.permissions.includes(item.permission)),
+      }))
+      .filter(group => group.items.length > 0);
   }, [session]);
+
+  const allowed = useMemo(
+    () => new Set(groups.flatMap(group => group.items.map(item => item.page))),
+    [groups],
+  );
 
   if (session === undefined) return <div className="loading-screen">Memuat sistem…</div>;
   if (!session) return <Login onLogin={refreshSession} />;
 
-  const current: Page = items.some(item => item.page === page) ? page : 'dashboard';
+  const current: Page = allowed.has(page) ? page : 'dashboard';
 
   async function logout() {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
@@ -94,17 +136,21 @@ export function App() {
         </div>
 
         <nav aria-label="Menu utama">
-          <div className="nav-group-label">Keuangan Yayasan</div>
-          {items.map(item => (
-            <button
-              key={item.page}
-              type="button"
-              className={current === item.page ? 'active' : ''}
-              onClick={() => setPage(item.page)}
-              data-testid={`nav-${item.page}`}
-            >
-              {item.icon} {item.label}
-            </button>
+          {groups.map(group => (
+            <div key={group.label} style={{ display: 'contents' }}>
+              <div className="nav-group-label">{group.label}</div>
+              {group.items.map(item => (
+                <button
+                  key={item.page}
+                  type="button"
+                  className={current === item.page ? 'active' : ''}
+                  onClick={() => setPage(item.page)}
+                  data-testid={`nav-${item.page}`}
+                >
+                  {item.icon} {item.label}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
 
@@ -134,7 +180,11 @@ export function App() {
           {current === 'units' && <Units session={session} />}
           {current === 'banks' && <BankAccounts session={session} />}
           {current === 'readiness' && <Readiness session={session} />}
-          {current === 'users' && <Users session={session} />}
+          {current === 'students' && <Students session={session} />}
+          {current === 'fees' && <Fees session={session} />}
+          {current === 'billing' && <Billing session={session} />}
+          {current === 'receivables' && <Receivables session={session} />}
+          {current === 'users' && <UsersPage session={session} />}
           {current === 'audit' && <Audit />}
         </main>
       </div>
