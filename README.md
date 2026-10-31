@@ -3,8 +3,8 @@
 Aplikasi keuangan untuk **satu badan hukum yayasan** dengan banyak jenjang dan cabang.
 Implementasi mengikuti **Blueprint Keuangan Yayasan Multiunit V1.2**.
 
-Status saat ini: **Foundation (FD-01 s.d. FD-05) + BILL-01 + FC-01 + ACC-01**.
-Modul pengakuan pendapatan `DEFERRED` dan laporan yayasan (RPT-01) menyusul pada fase berikutnya.
+Status saat ini: **Foundation (FD-01 s.d. FD-05) + BILL-01 + FC-01 + ACC-01 + RPT-01**.
+Sisa fase blueprint: FD-06 (hardening) dan modul anggaran/unit cost.
 
 ## 1. Ruang lingkup Foundation
 
@@ -23,10 +23,11 @@ Modul pengakuan pendapatan `DEFERRED` dan laporan yayasan (RPT-01) menyusul pada
 | Kas & bank | Saldo per rekening dari mutasi (masuk/keluar), daftar mutasi dengan filter rekening & tanggal, total masuk/keluar, pembatasan rekening per scope unit |
 | Pengeluaran | Jenis biaya (wajib akun beban), vendor, pengajuan dengan unit penanggung beban, alur Draft → Diajukan → Disetujui/Ditolak → Dibayar, pembayaran sebagian/penuh dari rekening berizin bayar, pembatalan pembayaran (VOID) dengan mutasi balik, idempotency key, maker-checker |
 | Akuntansi | Bagan akun (CoA) dengan tipe & saldo normal, jurnal otomatis dari tagihan/penerimaan/pengeluaran, jurnal manual, jurnal pembalik (reversal), neraca saldo, buku besar, rekonsiliasi subledger vs GL, periode fiskal bulanan + tutup/buka kembali (ACC-01/02/03) |
+| Laporan | Ringkasan cabang & jenjang (tagihan, penerimaan, pengeluaran, surplus, piutang, siswa), aging, status closing, posisi keuangan, aktivitas pendapatan–beban, arus kas per sumber, dan **drill-down** ke dokumen sumber — semua dibatasi scope unit pengguna |
 
-**Belum termasuk (fase berikut):** pengakuan pendapatan `DEFERRED`/pendapatan diterima di muka,
-lampiran/bukti dokumen, alokasi biaya bersama antarunit, RPT-01 (laporan cabang/jenjang/yayasan),
-integrasi & rekonsiliasi bank otomatis, transfer antarunit sebagai perpindahan kas.
+**Belum termasuk (fase berikut):** pengakuan pendapatan `DEFERRED`, lampiran/bukti dokumen,
+alokasi biaya bersama antarunit, anggaran & unit cost, integrasi & rekonsiliasi bank otomatis,
+transfer antarunit sebagai perpindahan kas, ekspor Excel/PDF.
 
 ## 2. Tech stack
 
@@ -65,18 +66,20 @@ backend/
   src/routes/cashBankRoutes.ts            # saldo & mutasi kas/bank
   src/routes/expenseRoutes.ts             # kategori, vendor, pengajuan, pembayaran, void
   src/routes/accountingRoutes.ts          # CoA, periode, jurnal, neraca saldo, rekonsiliasi, backfill
+  src/routes/reportRoutes.ts              # ringkasan, posisi, aktivitas, arus kas, drill-down
   src/routes/dashboardRoutes.ts
 frontend/
   src/App.tsx                             # shell + menu per permission
   src/pages/Dashboard.tsx · Organization.tsx · Units.tsx
   src/pages/BankAccounts.tsx · Readiness.tsx · Users.tsx · Audit.tsx
   src/pages/Students.tsx · Fees.tsx · Billing.tsx · Receivables.tsx
-  src/pages/Receipts.tsx · CashBank.tsx · Expenses.tsx · Accounting.tsx
+  src/pages/Receipts.tsx · CashBank.tsx · Expenses.tsx · Accounting.tsx · Reports.tsx
 tests/foundation_uat.py                   # UAT T01–T10 + T19 (blueprint)
 tests/billing_uat.py                      # UAT BILL-01 (tagihan & piutang)
 tests/receipt_uat.py                      # UAT FC-01 (penerimaan & kas/bank)
 tests/expense_uat.py                      # UAT FC-01 (pengeluaran & maker-checker)
 tests/accounting_uat.py                   # UAT ACC-01 (jurnal, rekonsiliasi, tutup buku)
+tests/report_uat.py                        # UAT RPT-01 (agregasi & drill-down)
 ```
 
 ## 4. Menjalankan lokal
@@ -162,6 +165,11 @@ seluruh unit. Role cabang dibatasi `user_unit_access` dan **dicek di server** pa
 | GET | `/api/v1/accounting/general-ledger` | Buku besar per akun |
 | GET | `/api/v1/accounting/reconciliation` | Piutang, uang muka, dan kas: subledger vs GL |
 | POST | `/api/v1/accounting/backfill` | Posting jurnal untuk transaksi lama (idempoten) |
+| GET | `/api/v1/reports/overview` | Ringkasan KPI + per cabang + per jenjang + aging + status closing |
+| GET | `/api/v1/reports/position` | Posisi keuangan (aset, liabilitas, aset neto, surplus) |
+| GET | `/api/v1/reports/activity` | Pendapatan & beban per akun + surplus |
+| GET | `/api/v1/reports/cash-flow` | Arus kas: saldo awal, mutasi per sumber, saldo akhir |
+| GET | `/api/v1/reports/drilldown` | Daftar dokumen sumber (`billed`/`collected`/`expense`/`outstanding`) |
 
 Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 `UNIT_FINANCE_NOT_READY`, `BANK_ACCOUNT_NOT_ALLOWED`, `BANK_ACCOUNT_DEDICATED_CONFLICT`,
@@ -189,6 +197,7 @@ Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 - **FC-01 pengeluaran** unit harus `ACTIVE` + `READY`; jenis biaya wajib punya akun beban (**ACC-01**); pengaju **tidak boleh** menyetujui/menolak pengajuannya sendiri (maker-checker); pembayaran hanya dari rekening `ACTIVE` + terverifikasi + `allow_disbursement` untuk unit pada tanggal bayar (**BANK-03/BANK-05**); total pembayaran tidak boleh melebihi nilai pengajuan (**BANK-07**); `idempotencyKey` membuat dua permintaan identik hanya menghasilkan satu posting (**T20**); VOID mencatat mutasi masuk balik dan menghitung ulang sisa.
 - **ACC-01** akun pada mapping tarif/jenis biaya/rekening harus ada di CoA dan bertipe sesuai (**ACC-01**); jurnal hanya seimbang debit = kredit (**ACC-02**); posting ke periode `CLOSED` ditolak dan pembukaan kembali wajib alasan + audit (**ACC-03**); koreksi memakai jurnal pembalik, jurnal posted tidak ditimpa; setiap sumber transaksi punya idempotency key (`INVOICE:<id>`, `RECEIPT:<id>`, `EXPENSE_PAYMENT:<id>`) sehingga backfill aman diulang.
 - **Rekonsiliasi** piutang subledger vs GL `1-1200`, uang muka vs penerimaan belum dialokasikan, dan kas GL vs mutasi bank + jurnal manual; selisih yang tidak dapat dijelaskan dilaporkan apa adanya.
+- **RPT-01** setiap angka ringkasan harus sama dengan hasil drill-down pada rentang & unit yang sama (tagihan, penerimaan, pengeluaran, piutang); aging wajib menjumlah ke total piutang; agregasi jenjang = agregasi unit; saldo kas laporan = saldo akun kas di buku besar; role cabang hanya menerima unit dalam scope-nya (`UNIT_FORBIDDEN` bila meminta unit lain).
 
 ## 8. Pengujian
 
@@ -226,10 +235,16 @@ BASE=http://127.0.0.1:4100 \
 ADMIN_EMAIL=admin@sekolah.test \
 ADMIN_PASSWORD='...' \
 uv run --with httpx python tests/accounting_uat.py
+
+# UAT RPT-01 (laporan agregasi & drill-down)
+BASE=http://127.0.0.1:4100 \
+ADMIN_EMAIL=admin@sekolah.test \
+ADMIN_PASSWORD='...' \
+uv run --with httpx python tests/report_uat.py
 ```
 
 Hasil terakhir: Foundation **21/21 lulus**, BILL-01 **24/24 lulus**, FC-01 penerimaan **40/40 lulus**,
-FC-01 pengeluaran **45/45 lulus**, ACC-01 **45/45 lulus**.
+FC-01 pengeluaran **45/45 lulus**, ACC-01 **45/45 lulus**, RPT-01 **31/31 lulus**.
 Semua suite bersifat rerun-safe (kode unik per `RUN_SUFFIX`, periode unik) dan hanya untuk DB
 lokal/staging. UAT ACC-01 membuat user `ACCOUNTING_PUSAT` sendiri karena izin `journal.post`
 tidak diberikan ke Admin Yayasan (pemisahan tugas, blueprint §08).
@@ -243,4 +258,4 @@ tidak diberikan ke Admin Yayasan (pemisahan tugas, blueprint §08).
 | BILL-01 | ✅ Siswa, enrollment, tarif, tagihan, cicilan, piutang |
 | FC-01 | ✅ Penerimaan & alokasi, kas & bank, pengeluaran (maker-checker) |
 | ACC-01 | ✅ CoA, jurnal otomatis & manual, reversal, rekonsiliasi, tutup buku |
-| RPT-01 | Dashboard cabang/jenjang/yayasan + drill-down |
+| RPT-01 | ✅ Ringkasan cabang/jenjang/yayasan, posisi, aktivitas, arus kas, drill-down — anggaran & unit cost menyusul |

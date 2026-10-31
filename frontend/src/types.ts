@@ -636,3 +636,115 @@ export type LedgerRow = {
   unit_code: string | null;
   unit_name: string | null;
 };
+
+/* ------------------------------------------------------------------ Laporan (RPT-01) */
+
+export type ReportTotals = {
+  billed: number;
+  collected: number;
+  expenses: number;
+  surplus: number;
+  outstanding: number;
+  students: number;
+  invoiceCount: number;
+  receiptCount: number;
+  paymentCount: number;
+};
+
+export type ReportUnitRow = {
+  unit_id: string;
+  unit_code: string;
+  unit_name: string;
+  level_id: string | null;
+  level_code: string | null;
+  level_name: string | null;
+  billed: number;
+  collected: number;
+  expenses: number;
+  surplus: number;
+  outstanding: number;
+  students: number;
+  invoice_count: number;
+  receipt_count: number;
+  payment_count: number;
+  open_invoices: number;
+};
+
+export type ReportLevelRow = {
+  level_id: string | null;
+  level_code: string;
+  level_name: string;
+  billed: number;
+  collected: number;
+  expenses: number;
+  surplus: number;
+  outstanding: number;
+  students: number;
+  units: number;
+};
+
+export type ReportOverview = {
+  from: string;
+  to: string;
+  totals: ReportTotals;
+  units: ReportUnitRow[];
+  byLevel: ReportLevelRow[];
+  aging: { CURRENT: number; D1_30: number; D31_60: number; D61_PLUS: number };
+  closing: { name: string; status: string; start_date: string; end_date: string }[];
+};
+
+export type ReportPosition = {
+  asOf: string;
+  assets: number;
+  liabilities: number;
+  equity: number;
+  revenue: number;
+  expense: number;
+  netIncome: number;
+  liabilitiesAndEquity: number;
+  difference: number;
+  balanced: boolean;
+};
+
+export type ReportActivity = {
+  from: string;
+  to: string;
+  items: { code: string; name: string; account_type: 'REVENUE' | 'EXPENSE'; amount: number }[];
+  revenue: number;
+  expense: number;
+  surplus: number;
+};
+
+export type ReportCashFlow = {
+  from: string;
+  to: string;
+  opening: number;
+  movements: { source_type: string; label: string; amount: number }[];
+  netChange: number;
+  closing: number;
+  inflow: number;
+  outflow: number;
+};
+
+export type DrilldownRow = {
+  id: string;
+  document_number: string;
+  document_date: string;
+  amount: string;
+  status: string;
+  party: string | null;
+  reference: string | null;
+  unit_code: string;
+  unit_name: string;
+};
+
+export type Drilldown = {
+  metric: string;
+  from: string;
+  to: string;
+  rows: DrilldownRow[];
+  total: number;
+  sumAmount: number;
+  page: number;
+  pageSize: number;
+};

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  Banknote, Building2, Calculator, FileText, Landmark, LayoutDashboard, LogOut, PieChart, Receipt, ScrollText,
+  Banknote, BarChart3, Building2, Calculator, FileText, Landmark, LayoutDashboard, LogOut, PieChart, Receipt, ScrollText,
   ShieldCheck, Users, UsersRound, Wallet, WalletCards,
 } from 'lucide-react';
 import { api } from './api';
@@ -22,10 +22,12 @@ import { Receipts } from './pages/Receipts';
 import { CashBank } from './pages/CashBank';
 import { Expenses } from './pages/Expenses';
 import { Accounting } from './pages/Accounting';
+import { Reports } from './pages/Reports';
 
 type Page =
   | 'dashboard' | 'organization' | 'units' | 'banks' | 'readiness'
   | 'students' | 'fees' | 'billing' | 'receivables' | 'receipts' | 'cashbank' | 'expenses' | 'accounting'
+  | 'reports'
   | 'users' | 'audit';
 
 type NavItem = { page: Page; label: string; icon: ReactNode; permission: Permission | null };
@@ -40,6 +42,12 @@ const NAV: NavGroup[] = [
       { page: 'units', label: 'Unit & Cabang', icon: <ShieldCheck size={18} />, permission: 'unit.view' },
       { page: 'banks', label: 'Rekening & Mapping', icon: <Landmark size={18} />, permission: 'bank.view' },
       { page: 'readiness', label: 'Kesiapan Keuangan', icon: <WalletCards size={18} />, permission: 'unit.view' },
+    ],
+  },
+  {
+    label: 'Laporan',
+    items: [
+      { page: 'reports', label: 'Laporan Yayasan', icon: <BarChart3 size={18} />, permission: 'report.view' },
     ],
   },
   {
@@ -93,6 +101,7 @@ const PAGE_TITLES: Record<Page, string> = {
   cashbank: 'Kas & Bank',
   expenses: 'Pengeluaran',
   accounting: 'Akuntansi',
+  reports: 'Laporan Yayasan',
   users: 'Pengguna & Akses',
   audit: 'Audit Trail',
 };
@@ -215,6 +224,7 @@ export function App() {
           {current === 'cashbank' && <CashBank session={session} />}
           {current === 'expenses' && <Expenses session={session} />}
           {current === 'accounting' && <Accounting session={session} />}
+          {current === 'reports' && <Reports session={session} />}
           {current === 'users' && <UsersPage session={session} />}
           {current === 'audit' && <Audit />}
         </main>
