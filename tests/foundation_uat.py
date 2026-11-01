@@ -171,6 +171,44 @@ def main() -> int:
     r = staff.get("/api/v1/users")
     check("role cabang tidak boleh kelola pengguna", r.status_code == 403, r.status_code)
 
+    # T21 — reset password oleh admin + wajib ganti saat login
+    pw_email = f"pwchange{SUFFIX}@sekolah.test"
+    temp_password = "Sementara2026!"
+    new_password = "Permanen2026!"
+    created_pw_user = admin.post("/api/v1/users", json={
+        "fullName": "Pengguna Ganti Password", "email": pw_email, "password": temp_password,
+        "role": "BENDAHARA_CABANG", "unitIds": [unit_id],
+    })
+    check("T21 pengguna uji ganti password dibuat", created_pw_user.status_code == 201, created_pw_user.status_code)
+    if created_pw_user.status_code == 201:
+        pw_user_id = created_pw_user.json()["id"]
+        pw_client = httpx.Client(base_url=BASE, timeout=30)
+        first = pw_client.post("/api/auth/login", json={"email": pw_email, "password": temp_password})
+        check("T21 login pertama wajib ganti password",
+              first.status_code == 200 and first.json().get("mustChangePassword") is True,
+              (first.status_code, first.json().get("mustChangePassword")))
+
+        changed = pw_client.post("/api/auth/change-password",
+                                 json={"currentPassword": temp_password, "newPassword": new_password})
+        check("T21 password berhasil diganti", changed.status_code == 200, changed.text[:80])
+        me = pw_client.get("/api/auth/me").json()
+        check("T21 kewajiban ganti password hilang", me.get("mustChangePassword") is False,
+              me.get("mustChangePassword"))
+
+        relogin = httpx.Client(base_url=BASE, timeout=30)
+        new_login = relogin.post("/api/auth/login", json={"email": pw_email, "password": new_password})
+        check("T21 login dengan password baru",
+              new_login.status_code == 200 and new_login.json().get("mustChangePassword") is False,
+              new_login.status_code)
+
+        reset = admin.post(f"/api/v1/users/{pw_user_id}/reset-password", json={"password": temp_password})
+        check("T21 admin reset password pengguna", reset.status_code == 200, reset.status_code)
+        reset_client = httpx.Client(base_url=BASE, timeout=30)
+        after_reset = reset_client.post("/api/auth/login", json={"email": pw_email, "password": temp_password})
+        check("T21 setelah reset wajib ganti lagi",
+              after_reset.status_code == 200 and after_reset.json().get("mustChangePassword") is True,
+              after_reset.status_code)
+
     # T16 — ubah identitas akademik unit yang sudah bertransaksi harus ditolak (VAL-08)
     tk_unit = next(unit["id"] for unit in hierarchy["units"] if unit["unit_code"] == "TK-PANAM")
     locked = admin.patch(f"/api/v1/organization/units/{tk_unit}", json={"educationLevelId": levels["SD"]})
@@ -183,7 +221,7 @@ def main() -> int:
     # T19 — audit trail (termasuk perubahan mapping rekening default)
     actions = {row["action"] for row in admin.get("/api/v1/audit-logs?limit=100").json()}
     check("T19 audit trail tercatat",
-          {"UNIT_CREATE", "BANK_ACCOUNT_VERIFY", "UNIT_BANK_ASSIGNMENT_CREATE"} <= actions,
+          {"UNIT_CREATE", "BANK_ACCOUNT_VERIFY", "UNIT_BANK_ASSIGNMENT_CREATE", "USER_PASSWORD_RESET"} <= actions,
           sorted(actions)[:8])
 
     return summary()

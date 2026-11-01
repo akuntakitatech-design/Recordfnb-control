@@ -166,7 +166,9 @@ def main() -> int:
     duplicate = admin.post("/api/v1/billing-runs/generate", json=payload)
     check("generate ganda ditolak", duplicate.status_code == 409 and duplicate.json().get("error") == "BILLING_RUN_DUPLICATE", duplicate.status_code)
 
-    invoices = admin.get("/api/v1/invoices", params={"periodLabel": period}).json()
+    # pageSize dinaikkan: satu periode bisa berisi puluhan invoice (semua siswa di unit),
+    # sedangkan default API hanya 25 baris sehingga siswa uji bisa terpotong.
+    invoices = admin.get("/api/v1/invoices", params={"periodLabel": period, "pageSize": 100}).json()
     invoice = next((row for row in invoices["rows"] if row["student_id"] == student_id), None)
     check("invoice terbentuk", invoice is not None, invoices.get("total"))
     if not invoice:
