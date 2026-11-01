@@ -13,6 +13,9 @@ Browser → Traefik (Coolify) → Nginx frontend → `/api/*` diproksi ke backen
 ## 1. Backend (aplikasi Coolify #1)
 
 - **Base Directory**: `/backend`, **Build Pack**: Dockerfile, **Port**: `3000`.
+- Image multi-stage: stage `build` meng-compile TypeScript (`yarn build` → `dist/`), stage runtime
+  hanya berisi `dependencies` produksi + `dist/` + `db/migrations`. Tidak ada `tsx`/`typescript`
+  di image runtime; container menjalankan `node dist/index.js` sebagai user non-root `node`.
 - Tanpa domain publik. Catat nama container/alias (mis. `backend-school`) untuk `BACKEND_URL` frontend.
 
 Environment:
@@ -60,3 +63,4 @@ BACKEND_URL=http://backend-school:3000
 | Login sukses tapi langsung logout | Cookie `Secure` tidak cocok | Biarkan `COOKIE_SECURE=auto`, pastikan HTTPS di domain |
 | `ER_ACCESS_DENIED` / `ECONNREFUSED` | `DATABASE_URL` salah | Gunakan host internal MariaDB |
 | Migrasi gagal | Versi MariaDB terlalu lama | Pakai MariaDB 10.11 / 11.x |
+| Container restart: `tsx: not found` | Start command memakai tool dev padahal image production tanpa devDependencies | Jalankan dari hasil build (`yarn build` + `node dist/index.js`), jangan `tsx` di runtime |
