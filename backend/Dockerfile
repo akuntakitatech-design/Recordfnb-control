@@ -5,7 +5,9 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+# Coolify meng-inject NODE_ENV=production saat build; tanpa --production=false
+# yarn akan melewati devDependencies sehingga `tsc` tidak tersedia.
+RUN yarn install --frozen-lockfile --production=false
 
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
@@ -17,7 +19,7 @@ WORKDIR /app
 ENV NODE_ENV=production     PORT=3000
 
 COPY package.json yarn.lock ./
-RUN yarn install --production --frozen-lockfile && yarn cache clean
+RUN yarn install --production=true --frozen-lockfile && yarn cache clean
 
 COPY --from=build /app/dist ./dist
 # dist/migrate.js membaca ../db/migrations relatif terhadap file hasil build.
