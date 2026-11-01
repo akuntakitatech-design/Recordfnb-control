@@ -7,6 +7,7 @@ import {
 import { api } from './api';
 import { ROLE_LABEL, type LegalEntity, type Permission, type Session } from './types';
 import { Login } from './pages/Login';
+import { ForcePasswordChange } from './pages/ForcePasswordChange';
 import { Dashboard } from './pages/Dashboard';
 import { Organization } from './pages/Organization';
 import { Units } from './pages/Units';
@@ -146,6 +147,7 @@ export function App() {
 
   if (session === undefined) return <div className="loading-screen">Memuat sistem…</div>;
   if (!session) return <Login onLogin={refreshSession} />;
+  if (session.mustChangePassword) return <ForcePasswordChange session={session} onDone={refreshSession} />;
 
   const current: Page = allowed.has(page) ? page : 'dashboard';
 
