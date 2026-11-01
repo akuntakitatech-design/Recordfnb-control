@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Pencil, Plus } from 'lucide-react';
+import { KeyRound, Pencil, Plus } from 'lucide-react';
 import { api, messageOf } from '../api';
 import { Modal } from '../components/Modal';
 import { StatusBadge } from './Organization';
@@ -78,6 +78,27 @@ export function Users({ session }: { session: Session }) {
         ? current.unitIds.filter(id => id !== unitId)
         : [...current.unitIds, unitId],
     }));
+  }
+
+  async function resetPassword(user: AppUser) {
+    const temporary = window.prompt(
+      `Password sementara untuk ${user.email} (minimal 8 karakter).\nPengguna wajib menggantinya saat login berikutnya.`,
+    );
+    if (temporary === null) return;
+    if (temporary.length < 8) { setError('Password sementara minimal 8 karakter.'); return; }
+    try {
+      await api(`/api/v1/users/${user.id}/reset-password`, {
+        method: 'POST',
+        body: JSON.stringify({ password: temporary }),
+      });
+      setError('');
+      setNotice(
+        `Password ${user.email} direset. Sampaikan password sementara secara langsung; `
+        + 'pengguna wajib menggantinya saat login.',
+      );
+    } catch (resetError) {
+      setError(messageOf(resetError));
+    }
   }
 
   async function save(event: FormEvent) {
@@ -165,6 +186,9 @@ export function Users({ session }: { session: Session }) {
                     <div className="cell-actions">
                       <button type="button" className="link-button" onClick={() => openEdit(user)}>
                         <Pencil size={14} /> Edit
+                      </button>
+                      <button type="button" className="link-button" onClick={() => void resetPassword(user)}>
+                        <KeyRound size={14} /> Reset password
                       </button>
                     </div>
                   </td>
