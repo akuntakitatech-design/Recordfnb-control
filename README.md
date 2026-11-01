@@ -36,7 +36,7 @@ transfer antarunit sebagai perpindahan kas, ekspor Excel/PDF.
 | Lapisan | Teknologi |
 |---|---|
 | Frontend | React 19 + TypeScript + Vite, CSS per modul, `lucide-react` |
-| Backend | Node.js 22 + Express + TypeScript (`tsx`) |
+| Backend | Node.js 22 + Express + TypeScript — dev `tsx`, produksi `node dist/index.js` |
 | Database | MariaDB ≥ 10.11 via `mysql2` (placeholder `?`) |
 | Auth | JWT 12 jam di cookie httpOnly (`school_session`), bcrypt |
 | Migrasi | SQL bernomor di `backend/db/migrations`, runner idempoten (`schema_migrations`) |
@@ -72,6 +72,7 @@ backend/
   src/routes/accountingRoutes.ts          # CoA, periode, jurnal, neraca saldo, rekonsiliasi, backfill
   src/routes/reportRoutes.ts              # ringkasan, posisi, aktivitas, arus kas, drill-down
   src/routes/dashboardRoutes.ts
+  tsconfig.build.json                     # emit TypeScript ke dist/ untuk image production
 frontend/
   src/App.tsx                             # shell + menu per permission
   src/pages/Login.tsx · ForcePasswordChange.tsx
@@ -98,6 +99,8 @@ scripts/verify.sh                         # typecheck + build + semua suite UAT
 
 cd backend && cp .env.example .env      # isi DATABASE_URL, JWT_SECRET, BOOTSTRAP_ADMIN_*
 yarn install && yarn dev                # http://localhost:4100/api/health
+yarn build                              # kompilasi ke dist/ (yang dipakai container production)
+yarn start                              # jalankan hasil build: node dist/index.js
 
 cd frontend && yarn install && yarn dev # http://localhost:4200 (proxy /api -> :4100)
 ```
