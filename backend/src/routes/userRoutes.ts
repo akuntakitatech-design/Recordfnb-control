@@ -59,7 +59,7 @@ userRouter.post('/users', requirePermission('user.manage'), async (req, res) => 
   }
 
   const id = randomUUID();
-  await exec('INSERT INTO users(id,email,password_hash,full_name,role) VALUES(?,?,?,?,?)', [
+  await exec('INSERT INTO users(id,email,password_hash,full_name,role,must_change_password) VALUES(?,?,?,?,?,1)', [
     id, email, await bcrypt.hash(password, 12), fullName, role,
   ]);
   for (const unitId of unitIds) {
@@ -92,7 +92,7 @@ userRouter.patch('/users/:id', requirePermission('user.manage'), async (req, res
   const password = String(req.body?.password ?? '');
   if (password) {
     if (password.length < 8) return res.status(400).json({ error: 'PASSWORD_TOO_SHORT' });
-    await exec('UPDATE users SET password_hash=? WHERE id=?', [await bcrypt.hash(password, 12), id]);
+    await exec('UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?', [await bcrypt.hash(password, 12), id]);
   }
 
   const after = await one('SELECT id,email,full_name,role,status FROM users WHERE id=?', [id]);
@@ -101,6 +101,27 @@ userRouter.patch('/users/:id', requirePermission('user.manage'), async (req, res
     action: 'USER_UPDATE', entityType: 'USER', entityId: id, before, after,
   });
   res.json({ ...after, units: await unitsOf(id) });
+});
+
+/** Reset password oleh admin: password sementara + wajib ganti saat login berikutnya. */
+userRouter.post('/users/:id/reset-password', requirePermission('user.manage'), async (req, res) => {
+  const id = text(req.params.id);
+  const target = await one<any>('SELECT id,email,full_name FROM users WHERE id=?', [id]);
+  if (!target) return res.status(404).json({ error: 'USER_NOT_FOUND' });
+
+  const password = String(req.body?.password ?? '');
+  if (password.length < 8) return res.status(400).json({ error: 'PASSWORD_TOO_SHORT' });
+
+  await exec(
+    'UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?',
+    [await bcrypt.hash(password, 12), id],
+  );
+  await writeAudit({
+    legalEntityId: await activeEntityId(), userId: req.user!.id, ip: req.ip || null,
+    action: 'USER_PASSWORD_RESET', entityType: 'USER', entityId: id,
+    after: { email: target.email, must_change_password: true },
+  });
+  res.json({ ok: true, mustChangePassword: true });
 });
 
 userRouter.put('/users/:id/units', requirePermission('user.manage'), async (req, res) => {

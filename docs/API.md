@@ -33,11 +33,19 @@ Semua respons API mengirim `X-Content-Type-Options: nosniff`, `X-Frame-Options: 
 
 | Method | Endpoint | Keterangan |
 |---|---|---|
-| POST | `/api/auth/login` | `{ email, password }` → `{ user, permissions }` |
+| POST | `/api/auth/login` | `{ email, password }` → `{ user, permissions, mustChangePassword }` |
 | POST | `/api/auth/logout` | Hapus cookie sesi |
-| GET | `/api/auth/me` | Sesi aktif + `unitScope` (null = semua unit) |
-| POST | `/api/auth/change-password` | `{ currentPassword, newPassword }` (min. 8 karakter) |
+| GET | `/api/auth/me` | Sesi aktif + `unitScope` (null = semua unit) + `mustChangePassword` |
+| POST | `/api/auth/change-password` | `{ currentPassword, newPassword }` (min. 8 karakter) — menghapus penanda wajib ganti |
 | GET | `/api/health` | Status service + label database (tanpa autentikasi) |
+
+**Kebijakan password (migrasi 007)**
+- Kolom `users.must_change_password` menandai akun yang password-nya baru direset admin/go-live.
+- Bila `mustChangePassword: true`, frontend **memblokir** seluruh aplikasi dan menampilkan halaman
+  "Buat password baru" sampai pengguna menyimpan password sendiri.
+- Penanda ini bersifat *UI-gated*: API tetap melayani sesi tersebut (dipakai suite UAT), sehingga
+  integrasi lain tidak putus hanya karena password belum diganti.
+- `users.password_changed_at` dicatat setiap kali password diganti.
 
 ## 3. Organisasi (FD-01…FD-05)
 
@@ -72,8 +80,18 @@ Semua respons API mengirim `X-Content-Type-Options: nosniff`, `X-Frame-Options: 
 | Method | Endpoint | Permission |
 |---|---|---|
 | GET/POST/PATCH | `/api/v1/users` | `user.manage` |
+| POST | `/api/v1/users/{id}/reset-password` | `user.manage` |
 | PUT | `/api/v1/users/{id}/units` | `user.manage` |
 | GET | `/api/v1/audit-logs` | `audit.view` |
+
+**Reset password oleh admin**
+- `POST /api/v1/users/{id}/reset-password` body `{ password }` (min. 8 karakter) menetapkan password
+  sementara dan menyalakan `must_change_password`, sehingga pengguna wajib menggantinya saat login berikutnya.
+- Nilai password tidak pernah ditulis ke log; audit mencatat `USER_PASSWORD_RESET`.
+- Pengguna baru (`POST /api/v1/users`) otomatis dibuat dengan `must_change_password = 1`.
+- Go-live: `BOOTSTRAP_ADMIN_RESET_PASSWORD=true` di env backend akan mereset password admin dari
+  `BOOTSTRAP_ADMIN_PASSWORD` + menyalakan penanda. **Hapus flag itu setelah satu kali start**, karena
+  selama aktif password admin direset ulang pada setiap restart.
 
 ## 6. Siswa & tarif (BILL-01)
 

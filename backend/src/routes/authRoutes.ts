@@ -15,6 +15,7 @@ type UserRow = {
   full_name: string;
   role: SessionUser['role'];
   status: string;
+  must_change_password: number;
 };
 
 function toSession(user: UserRow): SessionUser {
@@ -34,7 +35,7 @@ authRouter.post('/login', async (req, res) => {
   }
 
   const user = await one<UserRow>(
-    'SELECT id,email,password_hash,full_name,role,status FROM users WHERE email=? LIMIT 1', [email],
+    'SELECT id,email,password_hash,full_name,role,status,must_change_password FROM users WHERE email=? LIMIT 1', [email],
   );
   if (!user || user.status !== 'ACTIVE' || !(await bcrypt.compare(password, user.password_hash))) {
     recordFailure(limitKey, LOGIN_LIMIT.max, LOGIN_LIMIT.windowMs);
@@ -44,7 +45,11 @@ authRouter.post('/login', async (req, res) => {
   clearFailures(limitKey);
   const session = toSession(user);
   setSessionCookie(res, signSession(session));
-  res.json({ user: session, permissions: permissionsOf(user.role) });
+  res.json({
+    user: session,
+    permissions: permissionsOf(user.role),
+    mustChangePassword: Boolean(user.must_change_password),
+  });
 });
 
 authRouter.post('/logout', (_req, res) => {
@@ -54,7 +59,7 @@ authRouter.post('/logout', (_req, res) => {
 
 authRouter.get('/me', requireAuth, async (req, res) => {
   const user = await one<UserRow>(
-    'SELECT id,email,password_hash,full_name,role,status FROM users WHERE id=? LIMIT 1', [req.user!.id],
+    'SELECT id,email,password_hash,full_name,role,status,must_change_password FROM users WHERE id=? LIMIT 1', [req.user!.id],
   );
   if (!user || user.status !== 'ACTIVE') return res.status(401).json({ error: 'USER_INACTIVE' });
   const unitScope = await allowedUnitIds(req.user!);
@@ -62,6 +67,7 @@ authRouter.get('/me', requireAuth, async (req, res) => {
     user: toSession(user),
     permissions: permissionsOf(user.role),
     unitScope,
+    mustChangePassword: Boolean(user.must_change_password),
   });
 });
 
@@ -73,14 +79,17 @@ authRouter.post('/change-password', requireAuth, async (req, res) => {
   if (currentPassword === newPassword) return res.status(400).json({ error: 'NEW_PASSWORD_MUST_BE_DIFFERENT' });
 
   const user = await one<UserRow>(
-    'SELECT id,email,password_hash,full_name,role,status FROM users WHERE id=? LIMIT 1', [req.user!.id],
+    'SELECT id,email,password_hash,full_name,role,status,must_change_password FROM users WHERE id=? LIMIT 1', [req.user!.id],
   );
   if (!user || user.status !== 'ACTIVE') return res.status(404).json({ error: 'USER_NOT_FOUND' });
   if (!(await bcrypt.compare(currentPassword, user.password_hash))) {
     return res.status(400).json({ error: 'CURRENT_PASSWORD_INVALID' });
   }
 
-  await exec('UPDATE users SET password_hash=? WHERE id=?', [await bcrypt.hash(newPassword, 12), user.id]);
+  await exec(
+    'UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=NOW(6) WHERE id=?',
+    [await bcrypt.hash(newPassword, 12), user.id],
+  );
   setSessionCookie(res, signSession(toSession(user)));
-  res.json({ ok: true });
+  res.json({ ok: true, mustChangePassword: false });
 });

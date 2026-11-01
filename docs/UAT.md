@@ -27,13 +27,13 @@ dijalankan berulang pada DB yang sama.
 
 | Suite | Fokus | Hasil |
 |---|---|---|
-| `tests/foundation_uat.py` | FD-01…FD-05 | **23/23 lulus** |
+| `tests/foundation_uat.py` | FD-01…FD-05 + reset password | **30/30 lulus** |
 | `tests/billing_uat.py` | BILL-01 | **25/25 lulus** |
 | `tests/receipt_uat.py` | FC-01 penerimaan | **51/51 lulus** |
 | `tests/expense_uat.py` | FC-01 pengeluaran | **52/52 lulus** |
 | `tests/accounting_uat.py` | ACC-01 | **45/45 lulus** |
 | `tests/report_uat.py` | RPT-01 | **31/31 lulus** |
-| **Total** | | **227/227 lulus** |
+| **Total** | | **234/234 lulus** |
 
 ## Matriks T01–T20
 
@@ -72,6 +72,7 @@ dijalankan berulang pada DB yang sama.
 | ACC-01 | jurnal otomatis seimbang; jurnal tak seimbang 409; akun di luar CoA 400; reversal (bukan overwrite); backfill idempoten; `journal.post` hanya Accounting Pusat |
 | RPT-01 | aging Σ = piutang; surplus = penerimaan − pengeluaran; `closing = opening + netChange`; saldo kas laporan = akun `1-1100`; bendahara hanya unitnya |
 | Hardening | rate limit login 5 gagal → 429 `TOO_MANY_ATTEMPTS`; header keamanan; `UNIT_IDENTITY_LOCKED` (VAL-08) |
+| Reset password & wajib ganti (**T21**) | `foundation_uat` — user baru login → `mustChangePassword: true`; ganti password 200 → `/auth/me` `false`; login password baru 200; `POST /users/{id}/reset-password` 200 → login berikutnya wajib ganti lagi; audit mencatat `USER_PASSWORD_RESET` |
 
 ## Yang sengaja tidak diuji di otomasi
 

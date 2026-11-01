@@ -49,6 +49,7 @@ export type Session = {
   user: SessionUser;
   permissions: Permission[];
   unitScope: string[] | null;
+  mustChangePassword?: boolean;
 };
 
 export type LegalEntity = {
