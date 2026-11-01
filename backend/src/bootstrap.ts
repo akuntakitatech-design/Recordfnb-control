@@ -17,8 +17,11 @@ export async function bootstrapAdmin() {
     const reset = /^(1|true|yes)$/i.test(process.env.BOOTSTRAP_ADMIN_RESET_PASSWORD || '');
     if (reset) {
       const passwordHash = await bcrypt.hash(password, 12);
-      await exec("UPDATE users SET password_hash=?, role='ADMIN_YAYASAN', status='ACTIVE' WHERE id=?", [passwordHash, existing.id]);
-      console.log(`[bootstrap] admin ${email}: password direset dari env (hapus BOOTSTRAP_ADMIN_RESET_PASSWORD)`);
+      await exec(
+        "UPDATE users SET password_hash=?, role='ADMIN_YAYASAN', status='ACTIVE', must_change_password=1 WHERE id=?",
+        [passwordHash, existing.id],
+      );
+      console.log(`[bootstrap] admin ${email}: password direset dari env (wajib ganti saat login; hapus BOOTSTRAP_ADMIN_RESET_PASSWORD)`);
       return;
     }
     await exec("UPDATE users SET role='ADMIN_YAYASAN', status='ACTIVE' WHERE id=?", [existing.id]);
@@ -28,8 +31,8 @@ export async function bootstrapAdmin() {
 
   const passwordHash = await bcrypt.hash(password, 12);
   await exec(
-    "INSERT INTO users(id,email,password_hash,full_name,role) VALUES(?,?,?,?,'ADMIN_YAYASAN')",
+    "INSERT INTO users(id,email,password_hash,full_name,role,must_change_password) VALUES(?,?,?,?,'ADMIN_YAYASAN',1)",
     [randomUUID(), email, passwordHash, fullName],
   );
-  console.log(`[bootstrap] admin ${email} dibuat (ADMIN_YAYASAN)`);
+  console.log(`[bootstrap] admin ${email} dibuat (ADMIN_YAYASAN, wajib ganti password saat login pertama)`);
 }
