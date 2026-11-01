@@ -52,6 +52,7 @@ backend/
   db/migrations/004_receipts.sql          # penerimaan, alokasi, mutasi kas & bank
   db/migrations/005_disbursements.sql     # kategori biaya, vendor, pengajuan, pembayaran
   db/migrations/006_accounting.sql        # CoA, periode fiskal, jurnal + seed 9 akun
+  db/migrations/007_password_policy.sql   # penanda wajib ganti password + waktu ganti password
   src/index.ts                            # migrasi -> bootstrap admin -> listen
   src/db.ts · src/http.ts                 # pool & helper validasi
   src/auth.ts · src/permissions.ts        # sesi, 8 role, permission, unit scope
@@ -73,11 +74,12 @@ backend/
   src/routes/dashboardRoutes.ts
 frontend/
   src/App.tsx                             # shell + menu per permission
+  src/pages/Login.tsx · ForcePasswordChange.tsx
   src/pages/Dashboard.tsx · Organization.tsx · Units.tsx
   src/pages/BankAccounts.tsx · Readiness.tsx · Users.tsx · Audit.tsx
   src/pages/Students.tsx · Fees.tsx · Billing.tsx · Receivables.tsx
   src/pages/Receipts.tsx · CashBank.tsx · Expenses.tsx · Accounting.tsx · Reports.tsx
-tests/foundation_uat.py                   # UAT T01–T10 + T19 (blueprint)
+tests/foundation_uat.py                   # UAT T01–T10, T19 (blueprint) + T21 reset password
 tests/billing_uat.py                      # UAT BILL-01 (tagihan & piutang)
 tests/receipt_uat.py                      # UAT FC-01 (penerimaan & kas/bank)
 tests/expense_uat.py                      # UAT FC-01 (pengeluaran & maker-checker)
@@ -102,6 +104,22 @@ cd frontend && yarn install && yarn dev # http://localhost:4200 (proxy /api -> :
 
 Migrasi dan admin awal berjalan otomatis saat backend start.
 `yarn db:migrate` tersedia untuk menjalankan migrasi manual.
+
+**Lupa password / ambil alih akun admin**
+
+```bash
+# 1) set di backend/.env
+export BOOTSTRAP_ADMIN_EMAIL=admin@sekolah.test
+export BOOTSTRAP_ADMIN_PASSWORD='<password sementara>'
+export BOOTSTRAP_ADMIN_RESET_PASSWORD=true
+
+# 2) restart backend satu kali, lalu HAPUS BOOTSTRAP_ADMIN_RESET_PASSWORD
+#    (selama aktif, password admin direset ulang pada setiap restart)
+```
+
+Setelah reset, login dengan password sementara langsung menampilkan halaman **"Buat password baru"** dan
+seluruh aplikasi terblokir sampai pengguna menyimpan password sendiri. Admin juga bisa mereset pengguna
+lain lewat tombol **Reset password** di menu Pengguna (`POST /api/v1/users/{id}/reset-password`).
 
 ## 5. Role & permission
 
@@ -137,6 +155,7 @@ Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **
 | GET/POST/PUT | `/api/v1/bank-accounts` | Rekening fisik |
 | POST | `/api/v1/bank-accounts/{id}/verify`, `/deactivate` | Verifikasi & nonaktif |
 | GET/POST/PATCH | `/api/v1/users` | Pengguna + role |
+| POST | `/api/v1/users/{id}/reset-password` | Reset password (wajib ganti saat login) |
 | PUT | `/api/v1/users/{id}/units` | Scope unit |
 | GET | `/api/v1/audit-logs` | Jejak audit (filter entitas) |
 | GET | `/api/v1/dashboard` | Ringkasan yayasan |
@@ -234,8 +253,8 @@ uv run --with httpx python tests/foundation_uat.py   # FD-01…FD-05
 #                  accounting_uat.py · report_uat.py
 ```
 
-Hasil terakhir: Foundation **23/23**, BILL-01 **25/25**, FC-01 penerimaan **51/51**,
-FC-01 pengeluaran **52/52**, ACC-01 **45/45**, RPT-01 **31/31** — total **227/227 lulus**.
+Hasil terakhir: Foundation **30/30**, BILL-01 **25/25**, FC-01 penerimaan **51/51**,
+FC-01 pengeluaran **52/52**, ACC-01 **45/45**, RPT-01 **31/31** — total **234/234 lulus**.
 Semua suite bersifat rerun-safe (kode unik per `RUN_SUFFIX`, periode unik) dan hanya untuk DB
 lokal/staging. UAT ACC-01 membuat user `ACCOUNTING_PUSAT` sendiri karena izin `journal.post`
 tidak diberikan ke Admin Yayasan (pemisahan tugas, blueprint §08).
