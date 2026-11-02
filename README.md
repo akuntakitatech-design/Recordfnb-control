@@ -17,6 +17,7 @@ pengakuan pendapatan `DEFERRED`.
 | Kesiapan keuangan | Checklist per unit (identitas, mapping akun, rekening aktif & terverifikasi) → `READY` / `NOT_CONFIGURED` |
 | Akses | Role pusat & cabang, scope unit per pengguna, permission per aksi |
 | Audit | Semua perubahan konfigurasi tercatat (`before`/`after`, aktor, alasan, IP) |
+| Master organisasi | Jenjang, kelompok sekolah, sekolah resmi, lokasi, dan tahun ajaran bisa **diedit**, **dinonaktifkan**, atau **dihapus** (hapus hanya bila belum dipakai; selain itu `409 MASTER_IN_USE`) |
 | Siswa & penempatan | Master siswa per yayasan, riwayat penempatan unit/tahun ajaran (pernah pindah unit tetap tercatat) |
 | Tarif | Jenis biaya (+akun pendapatan, mode pengakuan), tarif per unit/tahun ajaran dengan masa berlaku, frekuensi, dan jumlah angsuran |
 | Tagihan & piutang | Generate tagihan per unit + periode (idempoten), rincian per jenis biaya, angsuran, daftar tagihan, pembatalan (VOID), piutang + aging |
@@ -60,6 +61,7 @@ backend/
   src/rateLimit.ts                        # rate limit percobaan login (in-memory)
   src/accounting.ts                       # mesin jurnal: periode, posting, reversal, mapping
   src/routes/organizationRoutes.ts        # hierarki, master, unit, readiness, assignments
+  src/routes/organizationMasterRoutes.ts  # aktif/nonaktif & hapus master organisasi
   src/routes/bankRoutes.ts                # rekening fisik + verifikasi
   src/routes/userRoutes.ts                # pengguna, scope unit, audit log global
   src/routes/studentRoutes.ts             # siswa + penempatan unit
@@ -81,6 +83,7 @@ frontend/
   src/pages/Students.tsx · Fees.tsx · Billing.tsx · Receivables.tsx
   src/pages/Receipts.tsx · CashBank.tsx · Expenses.tsx · Accounting.tsx · Reports.tsx
 tests/foundation_uat.py                   # UAT T01–T10, T19 (blueprint) + T21 reset password
+tests/organization_master_uat.py          # UAT T22 kelola master (edit, nonaktif, hapus)
 tests/billing_uat.py                      # UAT BILL-01 (tagihan & piutang)
 tests/receipt_uat.py                      # UAT FC-01 (penerimaan & kas/bank)
 tests/expense_uat.py                      # UAT FC-01 (pengeluaran & maker-checker)
@@ -159,6 +162,7 @@ Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **
 | POST | `/api/v1/bank-accounts/{id}/verify`, `/deactivate` | Verifikasi & nonaktif |
 | GET/POST/PATCH | `/api/v1/users` | Pengguna + role |
 | POST | `/api/v1/users/{id}/reset-password` | Reset password (wajib ganti saat login) |
+| PATCH/DELETE | `/api/v1/organization/{master}/{id}` | Status aktif/nonaktif & hapus master (jenjang, kelompok, sekolah resmi, lokasi, tahun ajaran) |
 | PUT | `/api/v1/users/{id}/units` | Scope unit |
 | GET | `/api/v1/audit-logs` | Jejak audit (filter entitas) |
 | GET | `/api/v1/dashboard` | Ringkasan yayasan |
@@ -207,7 +211,7 @@ Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 `ALLOCATION_EXCEEDS_RECEIPT`, `RECEIPT_ALREADY_VOID`, `EXPENSE_SELF_APPROVAL_FORBIDDEN`,
 `EXPENSE_ACCOUNT_MAPPING_MISSING`, `PAYMENT_EXCEEDS_REMAINING`, `EXPENSE_NOT_APPROVED`,
 `JOURNAL_NOT_BALANCED`, `JOURNAL_NOT_REVERSIBLE`, `ACCOUNT_MAPPING_MISSING`, `PERIOD_CLOSED`,
-`PERMISSION_DENIED`, dan seterusnya.
+`MASTER_IN_USE`, `PERMISSION_DENIED`, dan seterusnya.
 
 ## 7. Aturan validasi yang sudah diterapkan
 
@@ -222,6 +226,7 @@ Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 - **BANK-04** default penerimaan/pengeluaran tidak boleh ganda pada periode yang sama.
 - **ACC-01** mapping akun piutang & pendapatan wajib untuk status `READY`.
 - **Audit** perubahan konfigurasi mencatat before/after, aktor, alasan, IP.
+- **Master organisasi** hapus hanya bila belum dipakai (unit/tarif/tagihan); bila dipakai tolak `409 MASTER_IN_USE` dan gunakan nonaktif.
 - **BILL-01** tagihan hanya untuk unit `ACTIVE` + `finance_status=READY`; duplikat unit+tahun+periode ditolak; pembatalan hanya bila belum ada pembayaran; nilai uang dihitung dalam sen agar pembagian angsuran deterministik.
 - **FC-01** penerimaan hanya ke rekening `ACTIVE` + terverifikasi **dan** dipetakan ke unit pada tanggal transaksi; alokasi tidak boleh melebihi sisa tagihan (`ALLOCATION_EXCEEDS_OUTSTANDING`) maupun nilai penerimaan; `idempotencyKey` mencegah posting ganda; pembatalan tidak menghapus data (status `VOID` + mutasi keluar), tagihan/angsuran dihitung ulang dari alokasi yang masih `POSTED`; semua nilai diproses dalam sen.
 - **FC-01 pengeluaran** unit harus `ACTIVE` + `READY`; jenis biaya wajib punya akun beban (**ACC-01**); pengaju **tidak boleh** menyetujui/menolak pengajuannya sendiri (maker-checker); pembayaran hanya dari rekening `ACTIVE` + terverifikasi + `allow_disbursement` untuk unit pada tanggal bayar (**BANK-03/BANK-05**); total pembayaran tidak boleh melebihi nilai pengajuan (**BANK-07**); `idempotencyKey` membuat dua permintaan identik hanya menghasilkan satu posting (**T20**); VOID mencatat mutasi masuk balik dan menghitung ulang sisa.
@@ -252,12 +257,12 @@ BASE=http://127.0.0.1:4100 \
 ADMIN_EMAIL=admin@sekolah.test \
 ADMIN_PASSWORD='...' \
 uv run --with httpx python tests/foundation_uat.py   # FD-01…FD-05
-# ganti nama file: billing_uat.py · receipt_uat.py · expense_uat.py
-#                  accounting_uat.py · report_uat.py
+# ganti nama file: organization_master_uat.py · billing_uat.py · receipt_uat.py
+#                  expense_uat.py · accounting_uat.py · report_uat.py
 ```
 
-Hasil terakhir: Foundation **30/30**, BILL-01 **25/25**, FC-01 penerimaan **51/51**,
-FC-01 pengeluaran **52/52**, ACC-01 **45/45**, RPT-01 **31/31** — total **234/234 lulus**.
+Hasil terakhir: Foundation **30/30**, kelola master **13/13**, BILL-01 **25/25**, FC-01 penerimaan **51/51**,
+FC-01 pengeluaran **52/52**, ACC-01 **45/45**, RPT-01 **31/31** — total **247/247 lulus**.
 Semua suite bersifat rerun-safe (kode unik per `RUN_SUFFIX`, periode unik) dan hanya untuk DB
 lokal/staging. UAT ACC-01 membuat user `ACCOUNTING_PUSAT` sendiri karena izin `journal.post`
 tidak diberikan ke Admin Yayasan (pemisahan tugas, blueprint §08).

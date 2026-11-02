@@ -7,6 +7,7 @@ import { bootstrapAdmin } from './bootstrap.js';
 import { runMigrations } from './migrate.js';
 import { authRouter } from './routes/authRoutes.js';
 import { organizationRouter } from './routes/organizationRoutes.js';
+import { organizationMasterRouter } from './routes/organizationMasterRoutes.js';
 import { bankRouter } from './routes/bankRoutes.js';
 import { userRouter } from './routes/userRoutes.js';
 import { dashboardRouter } from './routes/dashboardRoutes.js';
@@ -44,6 +45,7 @@ app.get('/api/health', async (_req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/v1/organization', organizationRouter);
+app.use('/api/v1/organization', organizationMasterRouter);
 app.use('/api/v1', bankRouter);
 app.use('/api/v1', userRouter);
 app.use('/api/v1', dashboardRouter);
