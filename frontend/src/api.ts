@@ -51,6 +51,10 @@ const MESSAGES: Record<string, string> = {
   ACADEMIC_YEAR_FIELDS_REQUIRED: 'Nama, tanggal mulai, dan tanggal selesai wajib diisi.',
   ACADEMIC_YEAR_RANGE_INVALID: 'Tanggal selesai harus setelah tanggal mulai.',
   ACADEMIC_YEAR_OUTSIDE_ENTITY: 'Tahun ajaran bukan milik badan hukum ini.',
+  ACADEMIC_YEAR_NOT_FOUND: 'Tahun ajaran tidak ditemukan.',
+  ACADEMIC_YEAR_DUPLICATE: 'Nama tahun ajaran sudah dipakai.',
+  MASTER_IN_USE: 'Data master masih dipakai sehingga tidak bisa dihapus.',
+  STATUS_INVALID: 'Status tidak valid.',
 
   UNIT_CODE_INVALID: 'Kode unit 2–20 karakter: A-Z, 0-9, tanda hubung.',
   UNIT_CODE_DUPLICATE: 'Kode unit sudah dipakai pada yayasan ini.',

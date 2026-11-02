@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Pencil, Plus } from 'lucide-react';
+import { Pencil, Plus, Power, Trash2 } from 'lucide-react';
 import { api, messageOf } from '../api';
 import { Modal } from '../components/Modal';
 import type { Hierarchy, Session } from '../types';
@@ -283,11 +283,15 @@ function MasterTable({ config, onSaved }: { config: MasterConfig; onSaved: (mess
   const [form, setForm] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState<any | null>(null);
+  const [rowError, setRowError] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   function open(row: any | 'new') {
     const next: Record<string, string> = {};
     for (const field of config.fields) {
-      const value = row === 'new' ? '' : row[field.key];
+      // API mengirim snake_case (start_date) sedangkan field memakai camelCase (startDate).
+      const value = row === 'new' ? '' : (row[field.key] ?? row[snakeKey(field.key)]);
       next[field.key] = value === null || value === undefined ? '' : String(value);
     }
     setForm(next);
@@ -314,6 +318,39 @@ function MasterTable({ config, onSaved }: { config: MasterConfig; onSaved: (mess
     }
   }
 
+  async function toggleStatus(row: any) {
+    const next = row.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    setBusyId(row.id);
+    setRowError('');
+    try {
+      await api(`${config.endpoint}/${row.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: next }),
+      });
+      onSaved(next === 'ACTIVE'
+        ? `${labelOf(row)} diaktifkan kembali.`
+        : `${labelOf(row)} dinonaktifkan. Data tetap tersimpan dan bisa diaktifkan lagi.`);
+    } catch (statusError) {
+      setRowError(messageOf(statusError));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function remove(row: any) {
+    setBusyId(row.id);
+    setRowError('');
+    try {
+      await api(`${config.endpoint}/${row.id}`, { method: 'DELETE' });
+      setConfirming(null);
+      onSaved(`${labelOf(row)} dihapus.`);
+    } catch (deleteError) {
+      setRowError(messageOf(deleteError));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <section className="card">
       <div className="card-header">
@@ -325,6 +362,7 @@ function MasterTable({ config, onSaved }: { config: MasterConfig; onSaved: (mess
         )}
       </div>
       <div className="table-wrap">
+        {rowError && !confirming && <div className="form-error">{rowError}</div>}
         <table>
           <thead>
             <tr>
@@ -345,6 +383,24 @@ function MasterTable({ config, onSaved }: { config: MasterConfig; onSaved: (mess
                     <div className="cell-actions">
                       <button type="button" className="link-button" onClick={() => open(row)}>
                         <Pencil size={14} /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => void toggleStatus(row)}
+                        disabled={busyId === row.id}
+                        data-testid={`master-toggle-${row.id}`}
+                      >
+                        <Power size={14} /> {row.status === 'ACTIVE' ? 'Nonaktifkan' : 'Aktifkan'}
+                      </button>
+                      <button
+                        type="button"
+                        className="link-button danger"
+                        onClick={() => { setRowError(''); setConfirming(row); }}
+                        disabled={busyId === row.id}
+                        data-testid={`master-delete-${row.id}`}
+                      >
+                        <Trash2 size={14} /> Hapus
                       </button>
                     </div>
                   </td>
@@ -396,8 +452,46 @@ function MasterTable({ config, onSaved }: { config: MasterConfig; onSaved: (mess
           </form>
         </Modal>
       )}
+
+      {confirming && (
+        <Modal title={`Hapus ${config.title}`} onClose={() => setConfirming(null)} maxWidth={520}>
+          <p style={{ marginTop: 0 }}>
+            Hapus permanen <strong>{labelOf(confirming)}</strong>? Data yang dihapus tidak bisa dikembalikan.
+          </p>
+          <div className="notice">
+            Bila data ini sudah dipakai unit, tarif, atau tagihan, penghapusan akan ditolak.
+            Gunakan <strong>Nonaktifkan</strong> agar data tetap tersimpan.
+          </div>
+          {rowError && <div className="form-error">{rowError}</div>}
+          <div className="modal-actions">
+            <button type="button" className="ghost-button" onClick={() => setConfirming(null)}>Batal</button>
+            <button
+              type="button"
+              className="danger-button"
+              onClick={() => void remove(confirming)}
+              disabled={busyId === confirming.id}
+              data-testid="master-delete-confirm"
+            >
+              {busyId === confirming.id ? 'Menghapus…' : 'Hapus'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </section>
   );
+}
+
+/** Label ringkas satu baris master untuk pesan konfirmasi/notifikasi. */
+function labelOf(row: any): string {
+  const name = row?.name || '';
+  const code = row?.code || '';
+  if (code && name) return `${code} — ${name}`;
+  return name || code || 'data ini';
+}
+
+/** startDate -> start_date, educationLevelId -> education_level_id. */
+function snakeKey(key: string): string {
+  return key.replace(/[A-Z]/g, character => `_${character.toLowerCase()}`);
 }
 
 export function StatusBadge({ value }: { value: string }) {
