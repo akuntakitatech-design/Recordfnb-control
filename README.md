@@ -37,7 +37,7 @@ transfer antarunit sebagai perpindahan kas, ekspor Excel/PDF.
 | Lapisan | Teknologi |
 |---|---|
 | Frontend | React 19 + TypeScript + Vite, CSS per modul, `lucide-react` |
-| Backend | Node.js 22 + Express + TypeScript (`tsx`) |
+| Backend | Node.js 22 + Express + TypeScript — dev `tsx`, produksi `node dist/index.js` |
 | Database | MariaDB ≥ 10.11 via `mysql2` (placeholder `?`) |
 | Auth | JWT 12 jam di cookie httpOnly (`school_session`), bcrypt |
 | Migrasi | SQL bernomor di `backend/db/migrations`, runner idempoten (`schema_migrations`) |
@@ -74,6 +74,7 @@ backend/
   src/routes/accountingRoutes.ts          # CoA, periode, jurnal, neraca saldo, rekonsiliasi, backfill
   src/routes/reportRoutes.ts              # ringkasan, posisi, aktivitas, arus kas, drill-down
   src/routes/dashboardRoutes.ts
+  tsconfig.build.json                     # emit TypeScript ke dist/ untuk image production
 frontend/
   src/App.tsx                             # shell + menu per permission
   src/pages/Login.tsx · ForcePasswordChange.tsx
@@ -101,6 +102,8 @@ scripts/verify.sh                         # typecheck + build + semua suite UAT
 
 cd backend && cp .env.example .env      # isi DATABASE_URL, JWT_SECRET, BOOTSTRAP_ADMIN_*
 yarn install && yarn dev                # http://localhost:4100/api/health
+yarn build                              # kompilasi ke dist/ (yang dipakai container production)
+yarn start                              # jalankan hasil build: node dist/index.js
 
 cd frontend && yarn install && yarn dev # http://localhost:4200 (proxy /api -> :4100)
 ```
@@ -149,7 +152,6 @@ Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **
 | GET | `/api/v1/organization/hierarchy` | Struktur organisasi + ringkasan unit |
 | GET/PUT | `/api/v1/organization/legal-entity` | Profil badan hukum |
 | GET/POST/PUT | `/api/v1/organization/education-levels`, `school-groups`, `official-schools`, `locations`, `academic-years` | Master organisasi |
-| PATCH/DELETE | `/api/v1/organization/{master}/{id}` | Status aktif/nonaktif & hapus master (jenjang, kelompok, sekolah resmi, lokasi, tahun ajaran) |
 | GET/POST | `/api/v1/organization/units` | List (filter jenjang/status/cari) & buat Draft |
 | GET/PATCH | `/api/v1/organization/units/{id}` | Detail (settings, assignments, readiness, audit) & edit |
 | POST | `/api/v1/organization/units/{id}/activate`, `/deactivate` | Lifecycle terkontrol |
@@ -160,6 +162,7 @@ Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **
 | POST | `/api/v1/bank-accounts/{id}/verify`, `/deactivate` | Verifikasi & nonaktif |
 | GET/POST/PATCH | `/api/v1/users` | Pengguna + role |
 | POST | `/api/v1/users/{id}/reset-password` | Reset password (wajib ganti saat login) |
+| PATCH/DELETE | `/api/v1/organization/{master}/{id}` | Status aktif/nonaktif & hapus master (jenjang, kelompok, sekolah resmi, lokasi, tahun ajaran) |
 | PUT | `/api/v1/users/{id}/units` | Scope unit |
 | GET | `/api/v1/audit-logs` | Jejak audit (filter entitas) |
 | GET | `/api/v1/dashboard` | Ringkasan yayasan |
