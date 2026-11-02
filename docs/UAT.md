@@ -13,7 +13,7 @@ curl -s http://127.0.0.1:4100/api/health
 export ADMIN_EMAIL=admin@sekolah.test
 export ADMIN_PASSWORD='...'
 cd tests
-for suite in foundation billing receipt expense accounting report; do
+for suite in foundation organization_master billing receipt expense accounting report; do
   uv run --with httpx python ${suite}_uat.py
 done
 ```
@@ -28,12 +28,13 @@ dijalankan berulang pada DB yang sama.
 | Suite | Fokus | Hasil |
 |---|---|---|
 | `tests/foundation_uat.py` | FD-01…FD-05 + reset password | **30/30 lulus** |
+| `tests/organization_master_uat.py` | Kelola master (edit/nonaktif/hapus) | **13/13 lulus** |
 | `tests/billing_uat.py` | BILL-01 | **25/25 lulus** |
 | `tests/receipt_uat.py` | FC-01 penerimaan | **51/51 lulus** |
 | `tests/expense_uat.py` | FC-01 pengeluaran | **52/52 lulus** |
 | `tests/accounting_uat.py` | ACC-01 | **45/45 lulus** |
 | `tests/report_uat.py` | RPT-01 | **31/31 lulus** |
-| **Total** | | **234/234 lulus** |
+| **Total** | | **247/247 lulus** |
 
 ## Matriks T01–T20
 
@@ -73,6 +74,7 @@ dijalankan berulang pada DB yang sama.
 | RPT-01 | aging Σ = piutang; surplus = penerimaan − pengeluaran; `closing = opening + netChange`; saldo kas laporan = akun `1-1100`; bendahara hanya unitnya |
 | Hardening | rate limit login 5 gagal → 429 `TOO_MANY_ATTEMPTS`; header keamanan; `UNIT_IDENTITY_LOCKED` (VAL-08) |
 | Reset password & wajib ganti (**T21**) | `foundation_uat` — user baru login → `mustChangePassword: true`; ganti password 200 → `/auth/me` `false`; login password baru 200; `POST /users/{id}/reset-password` 200 → login berikutnya wajib ganti lagi; audit mencatat `USER_PASSWORD_RESET` |
+| Kelola master organisasi (**T22**) | `organization_master_uat` — hapus jenjang yang masih dipakai → `409 MASTER_IN_USE` (rincian `references`); `PATCH status` menonaktifkan & mengaktifkan kembali; hapus master tanpa relasi → 200; `PUT academic-years/{id}` menyimpan perubahan; audit mencatat `LEVEL_STATUS`, `LEVEL_DELETE`, `ACADEMIC_YEAR_UPDATE` |
 
 ## Yang sengaja tidak diuji di otomasi
 

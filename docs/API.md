@@ -60,6 +60,8 @@ Semua respons API mengirim `X-Content-Type-Options: nosniff`, `X-Frame-Options: 
 | GET | `/api/v1/organization/units/{id}/readiness` | `unit.view` |
 | PUT | `/api/v1/organization/units/{id}/finance-settings` | `unit.finance` |
 | POST/DELETE | `/api/v1/organization/units/{id}/bank-assignments[/{assignmentId}]` | `bank.assign` |
+| PATCH | `/api/v1/organization/{education-levels,school-groups,official-schools,locations,academic-years}/{id}/status` | `entity.manage` |
+| DELETE | `/api/v1/organization/{education-levels,school-groups,official-schools,locations,academic-years}/{id}` | `entity.manage` |
 | GET | `/api/v1/organization/audit-logs` | `audit.view` |
 
 **Aturan penting**
@@ -67,6 +69,14 @@ Semua respons API mengirim `X-Content-Type-Options: nosniff`, `X-Frame-Options: 
   transaksi → `409 UNIT_IDENTITY_LOCKED` (VAL-08).
 - `readiness` mengembalikan checklist lengkap (`status` + `checks[]`), bukan hanya boolean.
 - Mode rekening `MIXED` butuh minimal satu rekening `CENTRAL` dan satu `DEDICATED` aktif & terverifikasi.
+
+**Kelola master (jenjang, kelompok, sekolah resmi, lokasi, tahun ajaran)**
+- `PATCH .../{id}/status` body `{ status: "ACTIVE" | "INACTIVE" }` — menonaktifkan tanpa menghapus data.
+  Dipakai untuk master yang sudah terlanjur dipakai unit/tarif/tagihan. Audit: `<MASTER>_STATUS`.
+- `DELETE .../{id}` — hanya berhasil bila master **belum dipakai**. Jika masih dipakai, respons
+  `409 MASTER_IN_USE` dengan rincian `references: [{ label, count }]` (mis. 31 unit, 1 kelompok sekolah).
+  Audit: `<MASTER>_DELETE` berisi snapshot data sebelum dihapus.
+- `PUT /organization/academic-years/{id}` melengkapi CRUD tahun ajaran (sebelumnya hanya create).
 
 ## 4. Rekening bank
 
@@ -258,6 +268,7 @@ Role cabang (`KEPALA_JENJANG`, `KEPALA_CABANG`, `BENDAHARA_CABANG`) dibatasi `us
 | `UNIT_NOT_ACTIVE` | 400 | Unit belum aktif |
 | `UNIT_NOT_READY_FOR_BILLING` / `..._FOR_EXPENSE` | 400 | Kesiapan keuangan belum READY |
 | `UNIT_IDENTITY_LOCKED` | 409 | Ubah jenjang/sekolah unit yang sudah bertransaksi (VAL-08) |
+| `MASTER_IN_USE` | 409 | Master (jenjang/kelompok/sekolah/lokasi/tahun ajaran) masih dipakai — nonaktifkan saja |
 | `UNIT_CODE_DUPLICATE` / `NPSN_DUPLICATE` | 409 | Duplikasi identitas master |
 | `BANK_ACCOUNT_NOT_ALLOWED` / `NOT_READY` / `NOT_ASSIGNED_TO_UNIT` | 400/403 | Rekening tidak memenuhi syarat transaksi |
 | `BANK_ACCOUNT_DEDICATED_CONFLICT` | 409 | Rekening khusus dipakai unit lain pada periode tumpang tindih |
