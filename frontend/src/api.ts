@@ -180,6 +180,7 @@ const MESSAGES: Record<string, string> = {
   ATTACHMENT_TOO_MANY_FILES: 'Maksimal 10 file sekali unggah.',
   ATTACHMENT_FILE_INVALID: 'File tidak valid.',
   ATTACHMENT_FILE_TOO_LARGE: 'Ukuran file melebihi 5 MB.',
+  ATTACHMENT_TOTAL_TOO_LARGE: 'Total lampiran sekali unggah melebihi 20 MB.',
   ATTACHMENT_NOT_FOUND: 'Lampiran tidak ditemukan.',
   VENDOR_FIELDS_REQUIRED: 'Kode dan nama vendor wajib diisi.',
   VENDOR_DUPLICATE: 'Kode vendor sudah dipakai.',
