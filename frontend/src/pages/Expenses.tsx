@@ -6,10 +6,12 @@ import { Modal } from '../components/Modal';
 import { dateID, money, todayISO } from '../format';
 import { StatusBadge } from './Organization';
 import type {
-  BankBalance, ExpenseCategory, ExpenseDetail, ExpensePayment, ExpenseRow, Hierarchy, Permission, Session, Vendor,
+  BankBalance, ExpenseCategory, ExpenseDetail, ExpensePayment, ExpenseRow, Hierarchy, PaymentRequestRow, Permission, Session, Vendor,
 } from '../types';
 
-type Tab = 'requests' | 'approvals' | 'payments' | 'master';
+type LineForm = { itemName: string; qty: string; uom: string; unitPrice: string };
+
+type Tab = 'requests' | 'approvals' | 'payments' | 'mcm' | 'master';
 
 const STATUS_OPTIONS = ['', 'DRAFT', 'SUBMITTED', 'APPROVED', 'PAID', 'REJECTED', 'CANCELLED'];
 
@@ -31,13 +33,20 @@ export function Expenses({ session }: { session: Session }) {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     unitId: '', expenseCategoryId: '', vendorId: '', requestDate: todayISO(),
-    dueDate: '', payeeName: '', description: '', amount: '', notes: '',
+    dueDate: '', payeeName: '', description: '', amount: '', notes: '', shippingCost: '',
+    lines: [] as LineForm[],
   });
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
 
   const [detail, setDetail] = useState<ExpenseDetail | null>(null);
   const [detailError, setDetailError] = useState('');
+
+  const [mcmRows, setMcmRows] = useState<PaymentRequestRow[]>([]);
+  const [mcmModal, setMcmModal] = useState<ExpenseRow | null>(null);
+  const [mcmForm, setMcmForm] = useState({ bankAccountId: '', requestDate: todayISO(), amount: '', notes: '' });
+  const [mcmError, setMcmError] = useState('');
+  const [mcmSaving, setMcmSaving] = useState(false);
 
   const [paying, setPaying] = useState<ExpenseRow | null>(null);
   const [payForm, setPayForm] = useState({
@@ -80,6 +89,8 @@ export function Expenses({ session }: { session: Session }) {
       // abaikan: daftar utama tetap bisa dipakai
     }
     api<ExpenseCategory[]>('/api/v1/expense-categories').then(setCategories).catch(() => undefined);
+    api<{ rows: PaymentRequestRow[] }>('/api/v1/payment-requests?pageSize=100')
+      .then(result => setMcmRows(result.rows || [])).catch(() => undefined);
     api<Vendor[]>('/api/v1/vendors').then(setVendors).catch(() => undefined);
     api<Hierarchy>('/api/v1/organization/hierarchy')
       .then(result => {
@@ -105,13 +116,73 @@ export function Expenses({ session }: { session: Session }) {
     await loadSupport();
   }
 
+  function openMcm(row: ExpenseRow) {
+    setMcmForm({ bankAccountId: '', requestDate: todayISO(), amount: String(Number(row.remaining)), notes: '' });
+    setMcmError('');
+    setMcmModal(row);
+  }
+
+  async function submitMcm(event: FormEvent) {
+    event.preventDefault();
+    if (!mcmModal) return;
+    setMcmSaving(true);
+    setMcmError('');
+    try {
+      await api('/api/v1/payment-requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          expenseRequestId: mcmModal.id,
+          bankAccountId: mcmForm.bankAccountId,
+          requestDate: mcmForm.requestDate,
+          amount: Number(mcmForm.amount || 0),
+          notes: mcmForm.notes || null,
+        }),
+      });
+      setNotice('MCM dibuat sebagai draft. Ajukan agar disetujui Ketua Yayasan.');
+      setMcmModal(null);
+      await refresh();
+    } catch (mcmSubmitError) {
+      setMcmError(messageOf(mcmSubmitError));
+    } finally {
+      setMcmSaving(false);
+    }
+  }
+
+  async function mcmAction(path: string, body: Record<string, unknown>, message: string) {
+    try {
+      await api(path, { method: 'POST', body: JSON.stringify(body) });
+      setNotice(message);
+      setError('');
+      await refresh();
+    } catch (mcmActionError) {
+      setError(messageOf(mcmActionError));
+    }
+  }
+
   function openCreate() {
     setForm(current => ({
       ...current, expenseCategoryId: '', vendorId: '', description: '', amount: '', notes: '',
-      dueDate: '', payeeName: '',
+      dueDate: '', payeeName: '', shippingCost: '', lines: [],
     }));
     setFormError('');
     setCreating(true);
+  }
+
+  const lineTotal = (line: LineForm) => Number(line.qty || 0) * Number(line.unitPrice || 0);
+  const linesTotal = form.lines.reduce((sum, line) => sum + lineTotal(line), 0);
+  const grandTotal = form.lines.length
+    ? linesTotal + Number(form.shippingCost || 0)
+    : Number(form.amount || 0);
+
+  function updateLine(index: number, patch: Partial<LineForm>) {
+    setForm(current => ({
+      ...current,
+      lines: current.lines.map((line, i) => (i === index ? { ...line, ...patch } : line)),
+    }));
+  }
+
+  function removeLine(index: number) {
+    setForm(current => ({ ...current, lines: current.lines.filter((_, i) => i !== index) }));
   }
 
   async function submitCreate(event: FormEvent) {
@@ -129,7 +200,12 @@ export function Expenses({ session }: { session: Session }) {
           dueDate: form.dueDate || null,
           payeeName: form.payeeName || null,
           description: form.description,
-          amount: Number(form.amount),
+          amount: Number(form.amount || 0),
+          shippingCost: Number(form.shippingCost || 0),
+          lines: form.lines.map(line => ({
+            itemName: line.itemName, qty: Number(line.qty || 0), uom: line.uom || null,
+            unitPrice: Number(line.unitPrice || 0),
+          })),
           notes: form.notes || null,
         }),
       });
@@ -257,6 +333,12 @@ export function Expenses({ session }: { session: Session }) {
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: 'requests', label: 'Pengajuan', count: rows.length },
     ...(can('expense.approve') ? [{ id: 'approvals' as Tab, label: 'Persetujuan', count: pending.length }] : []),
+    ...((can('payment_request.create') || can('payment_request.approve') || can('expense.pay'))
+      ? [{
+        id: 'mcm' as Tab, label: 'MCM',
+        count: mcmRows.filter(row => ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(row.status)).length,
+      }]
+      : []),
     { id: 'payments', label: 'Pembayaran', count: payable.length },
     ...(can('expense.manage') ? [{ id: 'master' as Tab, label: 'Master', count: categories.length }] : []),
   ];
@@ -352,6 +434,11 @@ export function Expenses({ session }: { session: Session }) {
                         {can('expense.pay') && ['APPROVED', 'PAID'].includes(row.status) && Number(row.remaining) > 0 && (
                           <button type="button" className="link-button" onClick={() => openPay(row)}>
                             <Wallet size={14} /> Bayar
+                          </button>
+                        )}
+                        {can('payment_request.create') && ['APPROVED', 'PAID'].includes(row.status) && Number(row.remaining) > 0 && (
+                          <button type="button" className="link-button" onClick={() => openMcm(row)} data-testid={`expense-mcm-${row.id}`}>
+                            Buat MCM
                           </button>
                         )}
                         {can('expense.create') && Number(row.paid_amount) === 0 && !['PAID', 'CANCELLED'].includes(row.status) && (
@@ -452,6 +539,77 @@ export function Expenses({ session }: { session: Session }) {
             </div>
           </section>
         </>
+      )}
+
+      {tab === 'mcm' && (
+        <section className="card">
+          <div className="card-header">
+            <div>
+              <h3>MCM — Pengajuan Pembayaran</h3>
+              <p>Dibuat Finance, disetujui Ketua Yayasan, lalu diposting sehingga kas keluar dan jurnal terbentuk</p>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nomor</th><th>Tanggal</th><th>Pengajuan</th><th>Unit</th><th>Rekening</th>
+                  <th style={{ textAlign: 'right' }}>Nominal</th><th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mcmRows.map(row => (
+                  <tr key={row.id}>
+                    <td className="cell-muted">{row.request_number}</td>
+                    <td>{dateID(row.request_date)}</td>
+                    <td>
+                      {row.expense_request_number}
+                      <div className="cell-muted">{row.expense_description}</div>
+                    </td>
+                    <td>{row.unit_name}</td>
+                    <td>{row.bank_name}<div className="cell-muted">{row.account_number}</div></td>
+                    <td style={{ textAlign: 'right' }}>{money(row.amount)}</td>
+                    <td><StatusBadge value={row.status} /></td>
+                    <td>
+                      <div className="cell-actions">
+                        {can('payment_request.create') && ['DRAFT', 'REJECTED'].includes(row.status) && (
+                          <button type="button" className="link-button"
+                            onClick={() => void mcmAction(`/api/v1/payment-requests/${row.id}/submit`, {}, `MCM ${row.request_number} diajukan.`)}>
+                            <Send size={14} /> Ajukan
+                          </button>
+                        )}
+                        {can('payment_request.approve') && row.status === 'SUBMITTED' && (
+                          <>
+                            <button type="button" className="link-button"
+                              onClick={() => void mcmAction(`/api/v1/payment-requests/${row.id}/approve`, {}, `MCM ${row.request_number} disetujui.`)}>
+                              <Check size={14} /> Setujui
+                            </button>
+                            <button type="button" className="link-button danger"
+                              onClick={() => {
+                                const reason = window.prompt(`Alasan menolak ${row.request_number} (minimal 5 karakter):`) || '';
+                                if (reason.trim().length < 5) { setError('Alasan minimal 5 karakter.'); return; }
+                                void mcmAction(`/api/v1/payment-requests/${row.id}/reject`, { reason }, `MCM ${row.request_number} ditolak.`);
+                              }}>
+                              <X size={14} /> Tolak
+                            </button>
+                          </>
+                        )}
+                        {can('expense.pay') && row.status === 'APPROVED' && (
+                          <button type="button" className="link-button"
+                            onClick={() => void mcmAction(`/api/v1/payment-requests/${row.id}/post`, {}, `MCM ${row.request_number} diposting ke kas keluar.`)}>
+                            <Wallet size={14} /> Posting
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {mcmRows.length === 0 && <div className="table-empty">Belum ada MCM.</div>}
+          </div>
+        </section>
       )}
 
       {tab === 'master' && can('expense.manage') && (
@@ -567,10 +725,16 @@ export function Expenses({ session }: { session: Session }) {
                 <input type="date" className="input" value={form.dueDate}
                   onChange={event => setForm({ ...form, dueDate: event.target.value })} />
               </label>
-              <label className="field">Nominal (Rp)
-                <input className="input" inputMode="numeric" value={form.amount}
-                  onChange={event => setForm({ ...form, amount: event.target.value })} required data-testid="expense-amount" />
+              <label className="field">Biaya pengiriman (Rp)
+                <input className="input" inputMode="numeric" value={form.shippingCost}
+                  onChange={event => setForm({ ...form, shippingCost: event.target.value })} placeholder="0" data-testid="expense-shipping" />
               </label>
+              {form.lines.length === 0 && (
+                <label className="field">Nominal (Rp)
+                  <input className="input" inputMode="numeric" value={form.amount}
+                    onChange={event => setForm({ ...form, amount: event.target.value })} required data-testid="expense-amount" />
+                </label>
+              )}
               <label className="field">Vendor (opsional)
                 <select className="select" value={form.vendorId}
                   onChange={event => setForm({ ...form, vendorId: event.target.value })}>
@@ -588,6 +752,60 @@ export function Expenses({ session }: { session: Session }) {
                 <input className="input" value={form.notes}
                   onChange={event => setForm({ ...form, notes: event.target.value })} />
               </label>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <div className="toolbar">
+                <strong>Rincian barang</strong>
+                <span className="cell-muted">opsional · ketik nama barang sendiri</span>
+                <div className="spacer" />
+                <button type="button" className="ghost-button" data-testid="expense-line-add"
+                  onClick={() => setForm({ ...form, lines: [...form.lines, { itemName: '', qty: '1', uom: '', unitPrice: '' }] })}>
+                  <Plus size={14} /> Tambah baris
+                </button>
+              </div>
+              {form.lines.length > 0 && (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Nama barang</th><th>Qty</th><th>Satuan</th><th>Harga satuan</th>
+                        <th style={{ textAlign: 'right' }}>Subtotal</th><th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {form.lines.map((line, index) => (
+                        <tr key={index}>
+                          <td>
+                            <input className="input" value={line.itemName} data-testid={`expense-line-name-${index}`}
+                              onChange={event => updateLine(index, { itemName: event.target.value })}
+                              placeholder="Kertas A4 80gsm" />
+                          </td>
+                          <td style={{ width: 90 }}>
+                            <input className="input" inputMode="decimal" value={line.qty}
+                              onChange={event => updateLine(index, { qty: event.target.value })} />
+                          </td>
+                          <td style={{ width: 100 }}>
+                            <input className="input" value={line.uom}
+                              onChange={event => updateLine(index, { uom: event.target.value })} placeholder="rim" />
+                          </td>
+                          <td style={{ width: 150 }}>
+                            <input className="input" inputMode="numeric" value={line.unitPrice}
+                              onChange={event => updateLine(index, { unitPrice: event.target.value })} placeholder="55000" />
+                          </td>
+                          <td style={{ textAlign: 'right' }} className="cell-muted">{money(lineTotal(line))}</td>
+                          <td>
+                            <button type="button" className="link-button danger" onClick={() => removeLine(index)}>Hapus</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="cell-muted" style={{ marginTop: 8 }}>
+                Total pengajuan: <strong>{money(grandTotal)}</strong>
+                {form.lines.length > 0 && ` (rincian ${money(linesTotal)} + pengiriman ${money(Number(form.shippingCost || 0))})`}
+              </div>
             </div>
             <label className="field" style={{ marginTop: 12 }}>Uraian
               <input className="input" value={form.description}
@@ -662,6 +880,52 @@ export function Expenses({ session }: { session: Session }) {
         </Modal>
       )}
 
+      {mcmModal && (
+        <Modal title={`Buat MCM — ${mcmModal.request_number}`} onClose={() => setMcmModal(null)} maxWidth={680}>
+          <form onSubmit={submitMcm}>
+            <div className="form-grid">
+              <label className="field">Rekening pembayaran (Bank Mandiri)
+                <select className="select" value={mcmForm.bankAccountId}
+                  onChange={event => setMcmForm({ ...mcmForm, bankAccountId: event.target.value })} required data-testid="mcm-bank">
+                  <option value="">Pilih rekening…</option>
+                  {balances.filter(account =>
+                    account.status === 'ACTIVE' && Boolean(account.verified_at)
+                    && (account.disbursement_unit_ids || []).includes(mcmModal.unit_id),
+                  ).map(account => (
+                    <option key={account.id} value={account.id}>
+                      {account.bank_name} — {account.account_number} ({account.account_usage})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">Tanggal MCM
+                <input type="date" className="input" value={mcmForm.requestDate}
+                  onChange={event => setMcmForm({ ...mcmForm, requestDate: event.target.value })} required />
+              </label>
+              <label className="field">Nominal (Rp)
+                <input className="input" inputMode="numeric" value={mcmForm.amount}
+                  onChange={event => setMcmForm({ ...mcmForm, amount: event.target.value })} required data-testid="mcm-amount" />
+              </label>
+              <label className="field">Catatan (opsional)
+                <input className="input" value={mcmForm.notes}
+                  onChange={event => setMcmForm({ ...mcmForm, notes: event.target.value })}
+                  placeholder="DP / pelunasan" />
+              </label>
+            </div>
+            <div className="cell-muted" style={{ marginTop: 10 }}>
+              Sisa pengajuan: <strong>{money(mcmModal.remaining)}</strong> · isi sebagian untuk DP, penuh untuk pelunasan.
+            </div>
+            {mcmError && <div className="form-error" style={{ marginTop: 12 }}>{mcmError}</div>}
+            <div className="modal-actions">
+              <button type="button" className="ghost-button" onClick={() => setMcmModal(null)}>Batal</button>
+              <button type="submit" className="primary-button" disabled={mcmSaving} data-testid="mcm-save">
+                {mcmSaving ? 'Menyimpan…' : 'Simpan MCM'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {detail && (
         <Modal title={`Pengajuan ${detail.request_number}`} onClose={() => setDetail(null)} maxWidth={760}>
           {detailError && <div className="form-error">{detailError}</div>}
@@ -679,6 +943,59 @@ export function Expenses({ session }: { session: Session }) {
             <div><span>Disetujui oleh</span><strong>{detail.approved_by_name || '—'}</strong></div>
             <div><span>Alasan penolakan</span><strong>{detail.rejection_reason || '—'}</strong></div>
           </div>
+
+          {(detail.lines || []).length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <h4>Rincian barang</h4>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Barang</th><th>Qty</th><th>Satuan</th>
+                      <th style={{ textAlign: 'right' }}>Harga</th><th style={{ textAlign: 'right' }}>Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(detail.lines || []).map(line => (
+                      <tr key={line.id}>
+                        <td>{line.item_name}</td>
+                        <td>{line.qty}</td>
+                        <td className="cell-muted">{line.uom || '—'}</td>
+                        <td style={{ textAlign: 'right' }}>{money(line.unit_price)}</td>
+                        <td style={{ textAlign: 'right' }}>{money(line.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="cell-muted" style={{ marginTop: 6 }}>
+                Biaya pengiriman: <strong>{money(detail.shipping_cost || 0)}</strong>
+              </div>
+            </div>
+          )}
+
+          {(detail.paymentRequests || []).length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <h4>MCM</h4>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Nomor</th><th>Tanggal</th><th style={{ textAlign: 'right' }}>Nominal</th><th>Status</th></tr>
+                  </thead>
+                  <tbody>
+                    {(detail.paymentRequests || []).map(row => (
+                      <tr key={row.id}>
+                        <td className="cell-muted">{row.request_number}</td>
+                        <td>{dateID(row.request_date)}</td>
+                        <td style={{ textAlign: 'right' }}>{money(row.amount)}</td>
+                        <td><StatusBadge value={row.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           <p className="cell-strong" style={{ marginTop: 12 }}>{detail.description}</p>
 
           <div className="table-wrap" style={{ marginTop: 12 }}>

@@ -23,7 +23,8 @@ pengakuan pendapatan `DEFERRED`.
 | Tagihan & piutang | Generate tagihan per unit + periode (idempoten), rincian per jenis biaya, angsuran, daftar tagihan, pembatalan (VOID), piutang + aging |
 | Penerimaan | Kwitansi bernomor per tanggal + unit, metode bayar, rekening penerimaan sesuai mapping unit, alokasi ke satu/beberapa tagihan, sisa sebagai uang belum dialokasikan, pembatalan (VOID) yang memulihkan tagihan, idempotency key |
 | Kas & bank | Saldo per rekening dari mutasi (masuk/keluar), daftar mutasi dengan filter rekening & tanggal, total masuk/keluar, pembatasan rekening per scope unit |
-| Pengeluaran | Jenis biaya (wajib akun beban), vendor, pengajuan dengan unit penanggung beban, alur Draft → Diajukan → Disetujui/Ditolak → Dibayar, pembayaran sebagian/penuh dari rekening berizin bayar, pembatalan pembayaran (VOID) dengan mutasi balik, idempotency key, maker-checker |
+| Pengeluaran | Jenis biaya (wajib akun beban), vendor, **pengajuan pembelian dengan rincian barang** (nama diketik manual, qty, satuan, harga satuan) + **biaya pengiriman**, alur Draft → Diajukan → Disetujui/Ditolak → Dibayar, pembayaran sebagian/penuh dari rekening berizin bayar, pembatalan pembayaran (VOID) dengan mutasi balik, idempotency key, maker-checker |
+| MCM (pengajuan pembayaran) | Finance membuat MCM (rekening + nominal, boleh DP), disetujui **Ketua Yayasan** (maker-checker), lalu **diposting** → kas keluar + jurnal otomatis; satu pengajuan bisa punya beberapa MCM hingga lunas |
 | Akuntansi | Bagan akun (CoA) dengan tipe & saldo normal, jurnal otomatis dari tagihan/penerimaan/pengeluaran, jurnal manual, jurnal pembalik (reversal), neraca saldo, buku besar, rekonsiliasi subledger vs GL, periode fiskal bulanan + tutup/buka kembali (ACC-01/02/03) |
 | Laporan | Ringkasan cabang & jenjang (tagihan, penerimaan, pengeluaran, surplus, piutang, siswa), aging, status closing, posisi keuangan, aktivitas pendapatan–beban, arus kas per sumber, dan **drill-down** ke dokumen sumber — semua dibatasi scope unit pengguna |
 | Hardening | Rate limit login (5 gagal / 15 menit), header keamanan, detail error tidak dibocorkan di production, proteksi VAL-08 untuk identitas unit, dokumentasi API & traceability UAT, skrip verifikasi satu perintah |
@@ -183,9 +184,13 @@ Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **
 | GET | `/api/v1/cash-bank/mutations` | Mutasi kas & bank + total masuk/keluar terfilter |
 | GET/POST/PATCH | `/api/v1/expense-categories[/{id}]` | Jenis biaya keluar + akun beban (CoA) |
 | GET/POST/PATCH | `/api/v1/vendors[/{id}]` | Vendor/penerima pembayaran |
-| GET/POST | `/api/v1/expenses` | Daftar (filter unit/status/tanggal/cari) & buat pengajuan |
+| GET/POST | `/api/v1/expenses` | Daftar (filter unit/status/tanggal/cari) & buat pengajuan (dengan `lines[]` + `shippingCost`) |
 | GET | `/api/v1/expenses/{id}` | Rincian pengajuan + riwayat pembayaran |
 | POST | `/api/v1/expenses/{id}/submit`, `/approve`, `/reject`, `/cancel` | Alur pengajuan (maker-checker) |
+| GET/POST | `/api/v1/payment-requests` | Daftar & buat MCM (pengajuan pembayaran) |
+| GET | `/api/v1/payment-requests/{id}` | Detail MCM |
+| POST | `/api/v1/payment-requests/{id}/submit`, `/approve`, `/reject`, `/cancel` | Alur MCM (approve oleh Ketua Yayasan) |
+| POST | `/api/v1/payment-requests/{id}/post` | Posting MCM → pembayaran + kas keluar + jurnal |
 | GET | `/api/v1/expense-payments` | Daftar pembayaran pengeluaran |
 | POST | `/api/v1/expenses/{id}/payments` | Catat pembayaran (sebagian/penuh, idempotent) |
 | POST | `/api/v1/expense-payments/{id}/void` | Batalkan pembayaran + mutasi masuk balik |
@@ -230,6 +235,7 @@ Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 - **BILL-01** tagihan hanya untuk unit `ACTIVE` + `finance_status=READY`; duplikat unit+tahun+periode ditolak; pembatalan hanya bila belum ada pembayaran; nilai uang dihitung dalam sen agar pembagian angsuran deterministik.
 - **FC-01** penerimaan hanya ke rekening `ACTIVE` + terverifikasi **dan** dipetakan ke unit pada tanggal transaksi; alokasi tidak boleh melebihi sisa tagihan (`ALLOCATION_EXCEEDS_OUTSTANDING`) maupun nilai penerimaan; `idempotencyKey` mencegah posting ganda; pembatalan tidak menghapus data (status `VOID` + mutasi keluar), tagihan/angsuran dihitung ulang dari alokasi yang masih `POSTED`; semua nilai diproses dalam sen.
 - **FC-01 pengeluaran** unit harus `ACTIVE` + `READY`; jenis biaya wajib punya akun beban (**ACC-01**); pengaju **tidak boleh** menyetujui/menolak pengajuannya sendiri (maker-checker); pembayaran hanya dari rekening `ACTIVE` + terverifikasi + `allow_disbursement` untuk unit pada tanggal bayar (**BANK-03/BANK-05**); total pembayaran tidak boleh melebihi nilai pengajuan (**BANK-07**); `idempotencyKey` membuat dua permintaan identik hanya menghasilkan satu posting (**T20**); VOID mencatat mutasi masuk balik dan menghitung ulang sisa.
+- **Pembelian & MCM (T24)** total pengajuan dihitung server = Σ(`qty` × `harga satuan`) + `biaya pengiriman`; rincian barang divalidasi (nama ≥ 2 karakter, qty > 0, harga ≥ 0). MCM hanya boleh dibuat untuk pengajuan `APPROVED`/`PAID`, nominal ≤ sisa; pembuat MCM tidak boleh menyetujuinya sendiri; posting hanya setelah `APPROVED`; `idempotencyKey = MCM:<id>` mencegah posting ganda; DP dan pelunasan memakai MCM terpisah.
 - **ACC-01** akun pada mapping tarif/jenis biaya/rekening harus ada di CoA dan bertipe sesuai (**ACC-01**); jurnal hanya seimbang debit = kredit (**ACC-02**); posting ke periode `CLOSED` ditolak dan pembukaan kembali wajib alasan + audit (**ACC-03**); koreksi memakai jurnal pembalik, jurnal posted tidak ditimpa; setiap sumber transaksi punya idempotency key (`INVOICE:<id>`, `RECEIPT:<id>`, `EXPENSE_PAYMENT:<id>`) sehingga backfill aman diulang.
 - **Rekonsiliasi** piutang subledger vs GL `1-1200`, uang muka vs penerimaan belum dialokasikan, dan kas GL vs mutasi bank + jurnal manual; selisih yang tidak dapat dijelaskan dilaporkan apa adanya.
 - **RPT-01** setiap angka ringkasan harus sama dengan hasil drill-down pada rentang & unit yang sama (tagihan, penerimaan, pengeluaran, piutang); aging wajib menjumlah ke total piutang; agregasi jenjang = agregasi unit; saldo kas laporan = saldo akun kas di buku besar; role cabang hanya menerima unit dalam scope-nya (`UNIT_FORBIDDEN` bila meminta unit lain).

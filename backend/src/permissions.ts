@@ -31,6 +31,8 @@ export type Permission =
   | 'expense.approve'
   | 'expense.pay'
   | 'expense.void'
+  | 'payment_request.create'
+  | 'payment_request.approve'
   | 'accounting.view'
   | 'journal.post'
   | 'period.close'
@@ -57,6 +59,7 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
     'student.view', 'fee.view', 'billing.view', 'receivable.view',
     'receipt.view', 'cashbank.view',
     'expense.view', 'expense.approve',
+    'payment_request.approve',
     'accounting.view',
   ],
   ADMIN_YAYASAN: [
@@ -65,6 +68,7 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
     'student.view', 'student.manage', 'fee.view', 'fee.manage', 'billing.view', 'billing.generate',
     'invoice.void', 'receivable.view', 'receipt.view', 'receipt.create', 'receipt.void', 'cashbank.view',
     'expense.view', 'expense.create', 'expense.manage', 'expense.approve', 'expense.pay', 'expense.void',
+    'payment_request.create', 'payment_request.approve',
     'accounting.view', 'coa.manage',
   ],
   FINANCE_PUSAT: [
@@ -72,6 +76,7 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
     'student.view', 'fee.view', 'billing.view', 'billing.generate', 'invoice.void', 'receivable.view',
     'receipt.view', 'receipt.create', 'receipt.void', 'cashbank.view',
     'expense.view', 'expense.create', 'expense.manage', 'expense.approve', 'expense.pay', 'expense.void',
+    'payment_request.create',
     'accounting.view',
   ],
   ACCOUNTING_PUSAT: [

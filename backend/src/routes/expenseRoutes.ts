@@ -6,6 +6,7 @@ import { allowedUnitIds, canAccessUnit, requirePermission } from '../permissions
 import { writeAudit } from '../audit.js';
 import { fromCents, isDateOnly, nullableText, paging, text, toCents, today, upper } from '../http.js';
 import { journalForExpensePayment, reverseJournal } from '../accounting.js';
+import { postExpensePayment, refreshExpenseRequest } from '../expensePosting.js';
 
 export const expenseRouter = Router();
 expenseRouter.use(requireAuth);
@@ -18,30 +19,6 @@ async function isExpenseAccount(legalEntityId: string, code: string) {
     [legalEntityId, code],
   );
   return Boolean(account && account.account_type === 'EXPENSE' && account.is_postable && account.status === 'ACTIVE');
-}
-
-/**
- * Hitung ulang paid_amount + status pengajuan dari pembayaran yang masih POSTED.
- * Status workflow tetap: APPROVED selama belum lunas, PAID bila sudah lunas.
- */
-async function refreshRequest(conn: any, requestId: string) {
-  const [rows]: any = await conn.query(
-    `SELECT r.amount,r.status,
-            COALESCE((SELECT SUM(p.amount) FROM expense_payments p
-                       WHERE p.expense_request_id=r.id AND p.status='POSTED'), 0) paid
-       FROM expense_requests r WHERE r.id=?`,
-    [requestId],
-  );
-  const row = rows[0];
-  if (!row) return;
-  const amountCents = toCents(row.amount);
-  const paidCents = toCents(row.paid);
-  const status = ['DRAFT', 'SUBMITTED', 'REJECTED', 'CANCELLED'].includes(row.status)
-    ? row.status
-    : (paidCents >= amountCents ? 'PAID' : 'APPROVED');
-  await conn.query('UPDATE expense_requests SET paid_amount=?, status=? WHERE id=?', [
-    fromCents(paidCents), status, requestId,
-  ]);
 }
 
 async function requestDetail(id: string) {
@@ -60,6 +37,20 @@ async function requestDetail(id: string) {
       WHERE r.id=?`, [id],
   );
   if (!request) return null;
+  const lines = await query<any>(
+    `SELECT id,line_no,item_name,qty,uom,unit_price,amount,notes
+       FROM expense_request_lines WHERE expense_request_id=? ORDER BY line_no`,
+    [id],
+  );
+  const paymentRequests = await query<any>(
+    `SELECT p.id,p.request_number,p.request_date,p.amount,p.status,p.notes,
+            p.approved_at,p.rejection_reason,p.payment_id,b.bank_name,b.account_number
+       FROM payment_requests p
+       JOIN bank_accounts b ON b.id=p.bank_account_id
+      WHERE p.expense_request_id=?
+      ORDER BY p.created_at DESC`,
+    [id],
+  );
   const payments = await query<any>(
     `SELECT p.id,p.payment_number,p.payment_date,p.method,p.reference_number,p.amount,p.status,
             p.void_reason,p.created_at,b.bank_name,b.account_number,b.account_usage,
@@ -71,7 +62,7 @@ async function requestDetail(id: string) {
       ORDER BY p.payment_date, p.created_at`,
     [id],
   );
-  return { ...request, payments };
+  return { ...request, lines, paymentRequests, payments };
 }
 
 async function unitForExpense(req: any, res: any, unitId: string) {
@@ -100,6 +91,31 @@ async function unitForExpense(req: any, res: any, unitId: string) {
     return null;
   }
   return unit;
+}
+
+/** Rincian barang pengajuan pembelian: nama diketik manual, qty, satuan, harga satuan. */
+function parseExpenseLines(raw: any) {
+  if (raw === undefined || raw === null) return { lines: [] as any[], error: null as string | null };
+  if (!Array.isArray(raw)) return { lines: [], error: 'EXPENSE_LINES_INVALID' as string | null };
+  const lines: any[] = [];
+  for (const [index, item] of raw.entries()) {
+    const itemName = text(item?.itemName ?? item?.item_name);
+    const qty = Number(item?.qty);
+    const unitPriceCents = toCents(item?.unitPrice ?? item?.unit_price ?? 0);
+    if (itemName.length < 2) return { lines: [], error: 'EXPENSE_LINE_ITEM_REQUIRED' as string | null };
+    if (!Number.isFinite(qty) || qty <= 0) return { lines: [], error: 'EXPENSE_LINE_QTY_INVALID' as string | null };
+    if (!Number.isFinite(unitPriceCents) || unitPriceCents < 0) return { lines: [], error: 'EXPENSE_LINE_PRICE_INVALID' as string | null };
+    lines.push({
+      lineNo: index + 1,
+      itemName,
+      qty: Number(qty.toFixed(3)),
+      uom: nullableText(item?.uom),
+      unitPriceCents,
+      amountCents: Math.round(qty * unitPriceCents),
+      notes: nullableText(item?.notes),
+    });
+  }
+  return { lines, error: null as string | null };
 }
 
 /* ------------------------------------------------------------------ Master kategori */
@@ -301,13 +317,22 @@ expenseRouter.post('/expenses', requirePermission('expense.create'), async (req,
   const dueDate = nullableText(req.body?.dueDate);
   const description = text(req.body?.description);
   const amountCents = toCents(req.body?.amount);
+  const shippingCents = toCents(req.body?.shippingCost ?? 0);
+  const parsedLines = parseExpenseLines(req.body?.lines);
+  const lines = parsedLines.lines;
+  // Bila rincian barang diisi, total dihitung server: SUM(rincian) + biaya pengiriman.
+  const totalCents = lines.length
+    ? lines.reduce((sum, line) => sum + line.amountCents, 0) + shippingCents
+    : amountCents;
 
   if (!unitId || !categoryId || !description) return res.status(400).json({ error: 'EXPENSE_FIELDS_REQUIRED' });
   if (description.length < 3) return res.status(400).json({ error: 'EXPENSE_DESCRIPTION_TOO_SHORT' });
   if (!isDateOnly(requestDate)) return res.status(400).json({ error: 'EXPENSE_DATE_INVALID' });
   if (dueDate && !isDateOnly(dueDate)) return res.status(400).json({ error: 'EXPENSE_DUE_DATE_INVALID' });
   if (dueDate && dueDate < requestDate) return res.status(400).json({ error: 'EXPENSE_DUE_BEFORE_REQUEST' });
-  if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: 'EXPENSE_AMOUNT_INVALID' });
+  if (!Number.isFinite(shippingCents) || shippingCents < 0) return res.status(400).json({ error: 'EXPENSE_SHIPPING_INVALID' });
+  if (parsedLines.error) return res.status(400).json({ error: parsedLines.error });
+  if (!Number.isFinite(totalCents) || totalCents <= 0) return res.status(400).json({ error: 'EXPENSE_AMOUNT_INVALID' });
 
   const unit = await unitForExpense(req, res, unitId);
   if (!unit) return;
@@ -340,14 +365,22 @@ expenseRouter.post('/expenses', requirePermission('expense.create'), async (req,
 
     await conn.query(
       `INSERT INTO expense_requests(id,legal_entity_id,unit_id,expense_category_id,vendor_id,request_number,
-         request_date,due_date,payee_name,description,amount,status,notes,created_by,
+         request_date,due_date,payee_name,description,amount,shipping_cost,status,notes,created_by,
          submitted_by,submitted_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, unit.legal_entity_id, unitId, categoryId, vendorId, requestNumber, requestDate, dueDate,
-        nullableText(req.body?.payeeName), description, fromCents(amountCents),
+        nullableText(req.body?.payeeName), description, fromCents(totalCents), fromCents(shippingCents),
         submit ? 'SUBMITTED' : 'DRAFT', nullableText(req.body?.notes), req.user!.id,
         submit ? req.user!.id : null, submit ? new Date() : null],
     );
+    for (const line of lines) {
+      await conn.query(
+        `INSERT INTO expense_request_lines(id,legal_entity_id,expense_request_id,line_no,item_name,qty,uom,unit_price,amount,notes)
+         VALUES(?,?,?,?,?,?,?,?,?,?)`,
+        [randomUUID(), unit.legal_entity_id, id, line.lineNo, line.itemName, line.qty, line.uom,
+          fromCents(line.unitPriceCents), fromCents(line.amountCents), line.notes],
+      );
+    }
     await conn.commit();
   } catch (error: any) {
     await conn.rollback();
@@ -362,7 +395,7 @@ expenseRouter.post('/expenses', requirePermission('expense.create'), async (req,
   await writeAudit({
     legalEntityId: unit.legal_entity_id, unitId, userId: req.user!.id, ip: req.ip || null,
     action: 'EXPENSE_REQUEST_CREATE', entityType: 'EXPENSE_REQUEST', entityId: id,
-    after: { amount: Number(fromCents(amountCents)), status: submit ? 'SUBMITTED' : 'DRAFT' },
+    after: { amount: Number(fromCents(totalCents)), shipping: Number(fromCents(shippingCents)), lines: lines.length, status: submit ? 'SUBMITTED' : 'DRAFT' },
   });
   res.status(201).json(await requestDetail(id));
 });
@@ -591,70 +624,36 @@ expenseRouter.post('/expenses/:id/payments', requirePermission('expense.pay'), a
   );
   if (!assignment) return res.status(400).json({ error: 'BANK_ACCOUNT_NOT_ASSIGNED_TO_UNIT' });
 
-  const id = randomUUID();
-  const conn = await pool.getConnection();
+  let payment: { id: string; paymentNumber: string };
   try {
-    await conn.beginTransaction();
-    const [rows]: any = await conn.query(
-      'SELECT status,amount,paid_amount FROM expense_requests WHERE id=? FOR UPDATE',
-      [existing.id],
-    );
-    const locked = rows[0];
-    if (!locked) throw Object.assign(new Error('EXPENSE_NOT_FOUND'), { statusCode: 404 });
-    if (!['APPROVED', 'PAID'].includes(locked.status)) {
-      throw Object.assign(new Error('EXPENSE_NOT_APPROVED'), { statusCode: 409 });
-    }
-    const remainingCents = toCents(locked.amount) - toCents(locked.paid_amount);
-    if (amountCents > remainingCents) {
-      throw Object.assign(new Error('PAYMENT_EXCEEDS_REMAINING'), { statusCode: 409 });
-    }
-
-    const unitCode = String(existing.unit_code || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase() || 'UNIT';
-    const [seqRows]: any = await conn.query(
-      'SELECT COUNT(*) total FROM expense_payments WHERE legal_entity_id=? AND payment_number LIKE ?',
-      [existing.legal_entity_id, `PAY-${paymentDate.replace(/-/g, '')}-${unitCode}-%`],
-    );
-    const paymentNumber = `PAY-${paymentDate.replace(/-/g, '')}-${unitCode}-${String(Number(seqRows[0].total) + 1).padStart(3, '0')}`;
-
-    await conn.query(
-      `INSERT INTO expense_payments(id,legal_entity_id,expense_request_id,unit_id,bank_account_id,payment_number,
-         payment_date,method,reference_number,amount,status,idempotency_key,notes,created_by)
-       VALUES(?,?,?,?,?,?,?,?,?,?, 'POSTED', ?,?,?)`,
-      [id, existing.legal_entity_id, existing.id, existing.unit_id, bankAccountId, paymentNumber,
-        paymentDate, method, nullableText(req.body?.referenceNumber), fromCents(amountCents),
-        idempotencyKey, nullableText(req.body?.notes), req.user!.id],
-    );
-
-    await conn.query(
-      `INSERT INTO bank_mutations(id,legal_entity_id,bank_account_id,unit_id,mutation_date,direction,amount,source_type,source_id,description)
-       VALUES(?,?,?,?,?, 'OUT', ?, 'EXPENSE', ?, ?)`,
-      [randomUUID(), existing.legal_entity_id, bankAccountId, existing.unit_id, paymentDate,
-        fromCents(amountCents), id, `Pengeluaran ${paymentNumber}`],
-    );
-
-    await refreshRequest(conn, existing.id);
-
-    // ACC-01: Dr Beban jenis biaya, Cr Kas/Bank.
-    await journalForExpensePayment(conn, id, req.user!.id);
-
-    await conn.commit();
+    payment = await postExpensePayment({
+      legalEntityId: existing.legal_entity_id,
+      unitId: existing.unit_id,
+      unitCode: existing.unit_code,
+      requestId: existing.id,
+      bankAccountId,
+      paymentDate,
+      method,
+      referenceNumber: nullableText(req.body?.referenceNumber),
+      amountCents,
+      idempotencyKey,
+      notes: nullableText(req.body?.notes),
+      userId: req.user!.id,
+    });
   } catch (error: any) {
-    await conn.rollback();
     if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     if (error?.errno === 1062 || error?.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'EXPENSE_PAYMENT_DUPLICATE' });
     }
     throw error;
-  } finally {
-    conn.release();
   }
 
   await writeAudit({
     legalEntityId: existing.legal_entity_id, unitId: existing.unit_id, userId: req.user!.id, ip: req.ip || null,
-    action: 'EXPENSE_PAYMENT_CREATE', entityType: 'EXPENSE_PAYMENT', entityId: id,
-    after: { amount: Number(fromCents(amountCents)), request_id: existing.id, method },
+    action: 'EXPENSE_PAYMENT_CREATE', entityType: 'EXPENSE_PAYMENT', entityId: payment.id,
+    after: { amount: Number(fromCents(amountCents)), request_id: existing.id, method, payment_number: payment.paymentNumber },
   });
-  res.status(201).json({ payment: await paymentDetail(id), idempotent: false });
+  res.status(201).json({ payment: await paymentDetail(payment.id), idempotent: false });
 });
 
 async function paymentDetail(id: string) {
@@ -684,7 +683,7 @@ expenseRouter.post('/expense-payments/:id/void', requirePermission('expense.void
   try {
     await conn.beginTransaction();
     await conn.query("UPDATE expense_payments SET status='VOID',void_reason=? WHERE id=?", [reason, id]);
-    await refreshRequest(conn, payment.expense_request_id);
+    await refreshExpenseRequest(conn, payment.expense_request_id);
     await conn.query(
       `INSERT INTO bank_mutations(id,legal_entity_id,bank_account_id,unit_id,mutation_date,direction,amount,source_type,source_id,description)
        VALUES(?,?,?,?,?, 'IN', ?, 'EXPENSE_VOID', ?, ?)`,
