@@ -27,20 +27,20 @@ dijalankan berulang pada DB yang sama.
 
 | Suite | Fokus | Hasil |
 |---|---|---|
-| `tests/foundation_uat.py` | FD-01…FD-05 + reset password | **30/30 lulus** |
+| `tests/foundation_uat.py` | FD-01…FD-05 + reset password | **34/34 lulus** |
 | `tests/organization_master_uat.py` | Kelola master (edit/nonaktif/hapus) | **13/13 lulus** |
 | `tests/billing_uat.py` | BILL-01 | **25/25 lulus** |
 | `tests/receipt_uat.py` | FC-01 penerimaan | **51/51 lulus** |
 | `tests/expense_uat.py` | FC-01 pengeluaran | **52/52 lulus** |
 | `tests/accounting_uat.py` | ACC-01 | **45/45 lulus** |
 | `tests/report_uat.py` | RPT-01 | **31/31 lulus** |
-| **Total** | | **247/247 lulus** |
+| **Total** | | **251/251 lulus** |
 
 ## Matriks T01–T20
 
 | ID | Skenario blueprint | Status | Bukti / asersi |
 |---|---|---|---|
-| T01 | Buat TK Panam sebagai Draft | ✅ | `foundation_uat` — "T01 unit draft tersimpan" (201, `operational_status=DRAFT`) |
+| T01 | Buat TK Panam sebagai Draft | ✅ | `foundation_uat` — "T01 unit baru langsung aktif" (201, `operational_status=ACTIVE`); "T01b unit draft eksplisit tersimpan" untuk jalur lama; "T01c kode unit otomatis dibuat" (`TK-01`); "T01d unit otomatis langsung lengkap" |
 | T02 | Buat kode unit yang sama dua kali | ✅ | "T02 kode unit duplikat ditolak" → `409 UNIT_CODE_DUPLICATE` |
 | T03 | Tambah jenjang baru tanpa ubah schema | ✅ | "T03 tambah jenjang baru" (201 pada `education-levels`) |
 | T04 | Dua cabang di bawah sekolah resmi sama | ✅ | "T04 dua cabang satu sekolah resmi" (201) |
@@ -75,6 +75,7 @@ dijalankan berulang pada DB yang sama.
 | Hardening | rate limit login 5 gagal → 429 `TOO_MANY_ATTEMPTS`; header keamanan; `UNIT_IDENTITY_LOCKED` (VAL-08) |
 | Reset password & wajib ganti (**T21**) | `foundation_uat` — user baru login → `mustChangePassword: true`; ganti password 200 → `/auth/me` `false`; login password baru 200; `POST /users/{id}/reset-password` 200 → login berikutnya wajib ganti lagi; audit mencatat `USER_PASSWORD_RESET` |
 | Kelola master organisasi (**T22**) | `organization_master_uat` — hapus jenjang yang masih dipakai → `409 MASTER_IN_USE` (rincian `references`); `PATCH status` menonaktifkan & mengaktifkan kembali; hapus master tanpa relasi → 200; `PUT academic-years/{id}` menyimpan perubahan; audit mencatat `LEVEL_STATUS`, `LEVEL_DELETE`, `ACADEMIC_YEAR_UPDATE` |
+| Setup yayasan/sekolah disederhanakan (**T23**) | `foundation_uat` — unit baru **langsung ACTIVE** tanpa langkah aktivasi; kode unit otomatis `TK-xx`; sekolah resmi + lokasi + tahun ajaran terisi otomatis; `effectiveStart` default hari ini; sekolah resmi baru otomatis `VERIFIED`; UI master hanya **Edit · Hapus** dan tab Kelompok Sekolah tidak ditampilkan |
 
 ## Yang sengaja tidak diuji di otomasi
 

@@ -110,7 +110,7 @@ export function Units({ session }: { session: Session }) {
       };
       if (editing === 'new') {
         await api('/api/v1/organization/units', { method: 'POST', body: JSON.stringify(payload) });
-        setNotice('Unit dibuat sebagai Draft.');
+        setNotice('Unit dibuat dan langsung aktif.');
       } else if (editing) {
         await api(`/api/v1/organization/units/${editing.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
         setNotice('Perubahan unit tersimpan.');
@@ -236,21 +236,8 @@ export function Units({ session }: { session: Session }) {
         <Modal title={editing === 'new' ? 'Tambah Unit / Cabang' : `Edit Unit — ${editing.unit_name}`} onClose={() => setEditing(null)} maxWidth={760}>
           <form onSubmit={save}>
             <div className="form-grid">
-              <label className="field">Kode unit
-                <input className="input" value={form.unitCode} onChange={event => setForm({ ...form, unitCode: event.target.value.toUpperCase() })}
-                  placeholder="TK-PANAM" required disabled={editing !== 'new'} data-testid="unit-code" />
-              </label>
               <label className="field">Nama unit
                 <input className="input" value={form.unitName} onChange={event => setForm({ ...form, unitName: event.target.value })} required data-testid="unit-name" />
-              </label>
-              <label className="field">Nama singkat
-                <input className="input" value={form.shortName} onChange={event => setForm({ ...form, shortName: event.target.value })} />
-              </label>
-              <label className="field">Jenis unit
-                <select className="select" value={form.unitType} onChange={event => setForm({ ...form, unitType: event.target.value as UnitForm['unitType'] })}>
-                  <option value="SCHOOL_BRANCH">Cabang sekolah</option>
-                  <option value="HEAD_OFFICE">Kantor pusat</option>
-                </select>
               </label>
               <label className="field">Jenjang
                 <select className="select" value={form.educationLevelId} onChange={event => setForm({ ...form, educationLevelId: event.target.value })} required data-testid="unit-level">
@@ -258,46 +245,65 @@ export function Units({ session }: { session: Session }) {
                   {hierarchy.levels.map(level => <option key={level.id} value={level.id}>{level.code} — {level.name}</option>)}
                 </select>
               </label>
-              <label className="field">Kelompok sekolah
-                <select className="select" value={form.schoolGroupId} onChange={event => setForm({ ...form, schoolGroupId: event.target.value })}>
-                  <option value="">—</option>
-                  {hierarchy.groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
-                </select>
-              </label>
-              <label className="field">Sekolah resmi
-                <select className="select" value={form.officialSchoolId} onChange={event => setForm({ ...form, officialSchoolId: event.target.value })}>
-                  <option value="">—</option>
-                  {hierarchy.schools.map(school => (
-                    <option key={school.id} value={school.id}>{school.name}{school.npsn ? ` (${school.npsn})` : ''}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">Lokasi
-                <select className="select" value={form.locationId} onChange={event => setForm({ ...form, locationId: event.target.value })}>
-                  <option value="">—</option>
-                  {hierarchy.locations.map(location => <option key={location.id} value={location.id}>{location.name}</option>)}
-                </select>
-              </label>
-              <label className="field">Tahun ajaran
-                <select className="select" value={form.defaultAcademicYearId} onChange={event => setForm({ ...form, defaultAcademicYearId: event.target.value })}>
-                  <option value="">—</option>
-                  {hierarchy.academicYears.map(year => <option key={year.id} value={year.id}>{year.name}</option>)}
-                </select>
-              </label>
-              <label className="field">Mulai efektif
-                <input type="date" className="input" value={form.effectiveStart} onChange={event => setForm({ ...form, effectiveStart: event.target.value })} />
-              </label>
-              <label className="field">Berakhir
-                <input type="date" className="input" value={form.effectiveEnd} onChange={event => setForm({ ...form, effectiveEnd: event.target.value })} />
-              </label>
-              <label className="field full">Alamat
-                <input className="input" value={form.address} onChange={event => setForm({ ...form, address: event.target.value })} />
-              </label>
-              <label className="field full">Catatan
-                <input className="input" value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} />
+              <label className="field">Kode unit (opsional)
+                <input className="input" value={form.unitCode} onChange={event => setForm({ ...form, unitCode: event.target.value.toUpperCase() })}
+                  placeholder="Otomatis, mis. TK-01" disabled={editing !== 'new'} data-testid="unit-code" />
               </label>
               {formError && <div className="form-error">{formError}</div>}
             </div>
+
+            <details style={{ marginTop: 12 }}>
+              <summary className="cell-muted">Lanjutan (opsional) — sekolah resmi, lokasi, dan tahun ajaran dibuat otomatis bila dikosongkan</summary>
+              <div className="form-grid" style={{ marginTop: 12 }}>
+                <label className="field">Nama singkat
+                  <input className="input" value={form.shortName} onChange={event => setForm({ ...form, shortName: event.target.value })} />
+                </label>
+                <label className="field">Jenis unit
+                  <select className="select" value={form.unitType} onChange={event => setForm({ ...form, unitType: event.target.value as UnitForm['unitType'] })}>
+                    <option value="SCHOOL_BRANCH">Cabang sekolah</option>
+                    <option value="HEAD_OFFICE">Kantor pusat</option>
+                  </select>
+                </label>
+                <label className="field">Kelompok sekolah
+                  <select className="select" value={form.schoolGroupId} onChange={event => setForm({ ...form, schoolGroupId: event.target.value })}>
+                    <option value="">—</option>
+                    {hierarchy.groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                  </select>
+                </label>
+                <label className="field">Sekolah resmi
+                  <select className="select" value={form.officialSchoolId} onChange={event => setForm({ ...form, officialSchoolId: event.target.value })}>
+                    <option value="">—</option>
+                    {hierarchy.schools.map(school => (
+                      <option key={school.id} value={school.id}>{school.name}{school.npsn ? ` (${school.npsn})` : ''}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">Lokasi
+                  <select className="select" value={form.locationId} onChange={event => setForm({ ...form, locationId: event.target.value })}>
+                    <option value="">—</option>
+                    {hierarchy.locations.map(location => <option key={location.id} value={location.id}>{location.name}</option>)}
+                  </select>
+                </label>
+                <label className="field">Tahun ajaran
+                  <select className="select" value={form.defaultAcademicYearId} onChange={event => setForm({ ...form, defaultAcademicYearId: event.target.value })}>
+                    <option value="">—</option>
+                    {hierarchy.academicYears.map(year => <option key={year.id} value={year.id}>{year.name}</option>)}
+                  </select>
+                </label>
+                <label className="field">Mulai efektif
+                  <input type="date" className="input" value={form.effectiveStart} onChange={event => setForm({ ...form, effectiveStart: event.target.value })} />
+                </label>
+                <label className="field">Berakhir
+                  <input type="date" className="input" value={form.effectiveEnd} onChange={event => setForm({ ...form, effectiveEnd: event.target.value })} />
+                </label>
+                <label className="field full">Alamat
+                  <input className="input" value={form.address} onChange={event => setForm({ ...form, address: event.target.value })} />
+                </label>
+                <label className="field full">Catatan
+                  <input className="input" value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} />
+                </label>
+              </div>
+            </details>
             <div className="modal-actions">
               <button type="button" className="ghost-button" onClick={() => setEditing(null)}>Batal</button>
               <button type="submit" className="primary-button" disabled={saving} data-testid="unit-save">

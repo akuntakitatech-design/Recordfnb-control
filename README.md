@@ -11,13 +11,13 @@ pengakuan pendapatan `DEFERRED`.
 
 | Area | Isi |
 |---|---|
-| Organisasi | Badan hukum, jenjang, kelompok sekolah, sekolah resmi (NPSN), lokasi, tahun ajaran |
-| Unit / cabang | Draft → aktif → nonaktif, kode unik per yayasan, jenjang & sekolah resmi terhubung |
+| Organisasi | Badan hukum, jenjang, sekolah resmi (NPSN), lokasi, tahun ajaran. Kelompok sekolah tetap ada di data lama tetapi **tidak lagi ditampilkan** (dibuat otomatis bila unit baru butuh) |
+| Unit / cabang | **Langsung aktif saat dibuat** (Draft hanya bila diminta eksplisit), kode otomatis `<kode jenjang>-<urut>`, sekolah resmi/lokasi/tahun ajaran terisi otomatis, nonaktif bila berhenti operasi |
 | Rekening campuran | Rekening fisik `CENTRAL` / `DEDICATED`, mapping per unit (`CENTRAL_SHARED` / `UNIT_DEDICATED`), masa berlaku, default penerimaan/pengeluaran |
 | Kesiapan keuangan | Checklist per unit (identitas, mapping akun, rekening aktif & terverifikasi) → `READY` / `NOT_CONFIGURED` |
 | Akses | Role pusat & cabang, scope unit per pengguna, permission per aksi |
 | Audit | Semua perubahan konfigurasi tercatat (`before`/`after`, aktor, alasan, IP) |
-| Master organisasi | Jenjang, kelompok sekolah, sekolah resmi, lokasi, dan tahun ajaran bisa **diedit**, **dinonaktifkan**, atau **dihapus** (hapus hanya bila belum dipakai; selain itu `409 MASTER_IN_USE`) |
+| Master organisasi | Jenjang, sekolah resmi, lokasi, dan tahun ajaran bisa **diedit** atau **dihapus** (hapus hanya bila belum dipakai; selain itu `409 MASTER_IN_USE`). Status verifikasi sekolah resmi tidak lagi diminta: sekolah baru otomatis `VERIFIED` |
 | Siswa & penempatan | Master siswa per yayasan, riwayat penempatan unit/tahun ajaran (pernah pindah unit tetap tercatat) |
 | Tarif | Jenis biaya (+akun pendapatan, mode pengakuan), tarif per unit/tahun ajaran dengan masa berlaku, frekuensi, dan jumlah angsuran |
 | Tagihan & piutang | Generate tagihan per unit + periode (idempoten), rincian per jenis biaya, angsuran, daftar tagihan, pembatalan (VOID), piutang + aging |
@@ -152,9 +152,9 @@ Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **
 | GET | `/api/v1/organization/hierarchy` | Struktur organisasi + ringkasan unit |
 | GET/PUT | `/api/v1/organization/legal-entity` | Profil badan hukum |
 | GET/POST/PUT | `/api/v1/organization/education-levels`, `school-groups`, `official-schools`, `locations`, `academic-years` | Master organisasi |
-| GET/POST | `/api/v1/organization/units` | List (filter jenjang/status/cari) & buat Draft |
+| GET/POST | `/api/v1/organization/units` | List (filter jenjang/status/cari) & buat unit — langsung aktif, master terkait dibuat otomatis |
 | GET/PATCH | `/api/v1/organization/units/{id}` | Detail (settings, assignments, readiness, audit) & edit |
-| POST | `/api/v1/organization/units/{id}/activate`, `/deactivate` | Lifecycle terkontrol |
+| POST | `/api/v1/organization/units/{id}/activate`, `/deactivate` | Lifecycle untuk unit lama berstatus `DRAFT` / berhenti operasi |
 | GET | `/api/v1/organization/units/{id}/readiness` | Checklist kesiapan keuangan |
 | PUT | `/api/v1/organization/units/{id}/finance-settings` | Mode rekening + mapping akun |
 | POST/DELETE | `/api/v1/organization/units/{id}/bank-assignments[/{assignmentId}]` | Mapping rekening unit |
@@ -215,9 +215,9 @@ Error memakai kode stabil: `UNIT_CODE_DUPLICATE`, `UNIT_ACTIVATION_INCOMPLETE`,
 
 ## 7. Aturan validasi yang sudah diterapkan
 
-- **VAL-01/02** kode & nama unit wajib, kode unik per yayasan dan tidak dipakai ulang.
+- **VAL-01/02** nama unit wajib; kode unit opsional (dibuat otomatis `<kode jenjang>-<urut>`, mis. `TK-01`), unik per yayasan dan tidak dipakai ulang.
 - **VAL-03** jenjang/kelompok/sekolah/lokasi harus milik badan hukum yang sama.
-- **VAL-04** aktivasi ditolak bila jenjang sekolah resmi tidak sesuai jenjang unit.
+- **VAL-04** aktivasi ditolak bila jenjang sekolah resmi tidak sesuai jenjang unit (berlaku untuk unit lama yang masih `DRAFT`; unit baru sudah aktif sejak dibuat).
 - **VAL-05** NPSN unik; format 8 karakter alfanumerik.
 - **VAL-06** provinsi tanpa kota ditolak; kode pos 5 angka.
 - **VAL-09** tidak ada hapus fisik; unit dinonaktifkan/diarsipkan.

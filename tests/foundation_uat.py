@@ -13,6 +13,7 @@ Jalankan:
   uv run --with httpx python tests/foundation_uat.py
 """
 import os
+import re
 import sys
 import time
 
@@ -64,7 +65,7 @@ def main() -> int:
     })
     check("T05 NPSN duplikat ditolak", r.status_code == 409 and r.json().get("error") == "NPSN_DUPLICATE", r.status_code)
 
-    # T01 — buat unit Draft
+    # T01 — unit baru langsung aktif (tidak ada lagi langkah aktivasi)
     unit_payload = {
         "unitCode": f"SD-CAB{SUFFIX}", "unitName": "SD Harapan Cabang 01",
         "educationLevelId": levels["SD"], "officialSchoolId": sd_school,
@@ -72,10 +73,33 @@ def main() -> int:
         "address": "Jl. Panam, Pekanbaru", "effectiveStart": "2026-07-01",
     }
     r = admin.post("/api/v1/organization/units", json=unit_payload)
-    check("T01 unit draft tersimpan", r.status_code == 201 and r.json().get("operational_status") == "DRAFT", r.text[:90])
+    check("T01 unit baru langsung aktif", r.status_code == 201 and r.json().get("operational_status") == "ACTIVE", r.text[:90])
     if r.status_code != 201:
         return summary()
     unit_id = r.json()["id"]
+
+    # T01b — unit Draft hanya bila diminta eksplisit (dipakai uji blokir unit belum aktif)
+    draft_unit = admin.post("/api/v1/organization/units", json={
+        **unit_payload, "unitCode": f"SD-DRF{SUFFIX}", "unitName": "SD Harapan Draft",
+        "operationalStatus": "DRAFT",
+    })
+    check("T01b unit draft eksplisit tersimpan",
+          draft_unit.status_code == 201 and draft_unit.json().get("operational_status") == "DRAFT", draft_unit.text[:90])
+
+    # T01c — sekolah resmi, lokasi, tahun ajaran, dan kode unit terisi otomatis
+    auto_unit = admin.post("/api/v1/organization/units", json={
+        "unitName": f"Unit Otomatis {SUFFIX}", "educationLevelId": levels["TK"],
+    })
+    check("T01c kode unit otomatis dibuat",
+          auto_unit.status_code == 201 and re.match(r"^TK-\d{2}$", auto_unit.json().get("unit_code") or "") is not None,
+          auto_unit.text[:90])
+    check("T01d unit otomatis langsung lengkap",
+          auto_unit.status_code == 201
+          and bool(auto_unit.json().get("official_school_id"))
+          and bool(auto_unit.json().get("location_id"))
+          and bool(auto_unit.json().get("default_academic_year_id"))
+          and bool(auto_unit.json().get("effective_start")),
+          auto_unit.text[:90])
 
     # T02 — kode unit duplikat
     r = admin.post("/api/v1/organization/units", json={
@@ -89,11 +113,18 @@ def main() -> int:
     })
     check("T04 dua cabang satu sekolah resmi", r.status_code == 201, r.status_code)
 
-    # T06 — aktivasi tanpa identitas lengkap
-    r = admin.post("/api/v1/organization/units", json={
+    # T06 — aktivasi unit lama yang identitasnya belum lengkap tetap ditolak
+    incomplete = admin.post("/api/v1/organization/units", json={
         "unitCode": f"XX{SUFFIX}", "unitName": "Unit Tanpa Lokasi", "educationLevelId": levels["TK"],
+        "operationalStatus": "DRAFT",
     })
-    incomplete_unit = r.json()["id"]
+    check("unit draft untuk uji aktivasi dibuat", incomplete.status_code == 201, incomplete.text[:90])
+    if incomplete.status_code != 201:
+        return summary()
+    incomplete_unit = incomplete.json()["id"]
+    admin.patch(f"/api/v1/organization/units/{incomplete_unit}", json={
+        "locationId": None, "officialSchoolId": None, "effectiveStart": None,
+    })
     r = admin.post(f"/api/v1/organization/units/{incomplete_unit}/activate")
     check("T06 aktivasi tanpa lokasi ditolak", r.status_code == 400 and r.json().get("error") == "UNIT_ACTIVATION_INCOMPLETE", r.text[:90])
 

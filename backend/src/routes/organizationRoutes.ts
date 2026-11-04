@@ -206,9 +206,15 @@ organizationRouter.post('/official-schools', requirePermission('entity.manage'),
   if (npsn && await one('SELECT id FROM official_schools WHERE npsn=?', [npsn])) {
     return res.status(409).json({ error: 'NPSN_DUPLICATE' });
   }
+  // Sekolah resmi baru dianggap terverifikasi; status verifikasi hanya dipertahankan
+  // untuk data lama yang memang belum diverifikasi.
+  const verification = upper(req.body?.verificationStatus) || 'VERIFIED';
+  if (!['UNVERIFIED', 'VERIFIED'].includes(verification)) {
+    return res.status(400).json({ error: 'VERIFICATION_STATUS_INVALID' });
+  }
   const id = randomUUID();
-  await exec('INSERT INTO official_schools(id,legal_entity_id,education_level_id,name,npsn,government_reference) VALUES(?,?,?,?,?,?)', [
-    id, entity.id, levelId, name, npsn, nullableText(req.body?.governmentReference),
+  await exec('INSERT INTO official_schools(id,legal_entity_id,education_level_id,name,npsn,verification_status,government_reference) VALUES(?,?,?,?,?,?,?)', [
+    id, entity.id, levelId, name, npsn, verification, nullableText(req.body?.governmentReference),
   ]);
   const after = await one('SELECT * FROM official_schools WHERE id=?', [id]);
   await writeAudit({ ...auditContext(req, entity.id, null), action: 'SCHOOL_CREATE', entityType: 'OFFICIAL_SCHOOL', entityId: id, after });
@@ -406,32 +412,106 @@ organizationRouter.get('/units', async (req, res) => {
   res.json({ rows, total: Number(total?.total || 0), page: Math.floor(offset / pageSize) + 1, pageSize });
 });
 
+const isoToday = () => new Date().toISOString().slice(0, 10);
+
+/** Sekolah resmi untuk unit: pakai yang sudah ada pada jenjang sama, atau buat otomatis. */
+async function ensureOfficialSchool(entityId: string, levelId: string, name: string) {
+  const existing = await one<any>(
+    "SELECT id FROM official_schools WHERE legal_entity_id=? AND education_level_id=? AND status='ACTIVE' ORDER BY created_at LIMIT 1",
+    [entityId, levelId],
+  );
+  if (existing) return existing.id;
+  const id = randomUUID();
+  await exec(
+    "INSERT INTO official_schools(id,legal_entity_id,education_level_id,name,verification_status) VALUES(?,?,?,?,'VERIFIED')",
+    [id, entityId, levelId, name],
+  );
+  return id;
+}
+
+/** Lokasi operasional untuk unit: pakai nama yang sama bila sudah ada, atau buat otomatis. */
+async function ensureLocation(entityId: string, name: string, address: string | null) {
+  const existing = await one<any>('SELECT id FROM school_locations WHERE legal_entity_id=? AND name=? LIMIT 1', [entityId, name]);
+  if (existing) return existing.id;
+  const id = randomUUID();
+  await exec('INSERT INTO school_locations(id,legal_entity_id,name,address) VALUES(?,?,?,?)', [id, entityId, name, address]);
+  return id;
+}
+
+/** Tahun ajaran aktif: pakai yang terbaru, atau buat tahun ajaran berjalan (Juli–Juni). */
+async function ensureAcademicYear(entityId: string) {
+  const existing = await one<any>('SELECT id FROM academic_years WHERE legal_entity_id=? ORDER BY start_date DESC LIMIT 1', [entityId]);
+  if (existing) return existing.id;
+  const now = new Date();
+  const startYear = now.getUTCMonth() >= 6 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+  const id = randomUUID();
+  await exec('INSERT INTO academic_years(id,legal_entity_id,name,start_date,end_date) VALUES(?,?,?,?,?)', [
+    id, entityId, `${startYear}/${startYear + 1}`, `${startYear}-07-01`, `${startYear + 1}-06-30`,
+  ]);
+  return id;
+}
+
+/** Kode unit otomatis: <kode jenjang>-<urut 2 digit>, mis. TK-01. */
+async function nextUnitCode(entityId: string, levelCode: string | null) {
+  const prefix = (levelCode || 'UNIT').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'UNIT';
+  for (let i = 1; i <= 99; i += 1) {
+    const candidate = `${prefix}-${String(i).padStart(2, '0')}`;
+    const taken = await one('SELECT id FROM organization_units WHERE legal_entity_id=? AND unit_code=?', [entityId, candidate]);
+    if (!taken) return candidate;
+  }
+  return `${prefix}-${String(Date.now()).slice(-6)}`;
+}
+
+/** Kode akun default dari COA yang tersedia (dipakai saat unit dibuat). */
+async function defaultAccountCodes(entityId: string) {
+  const rows = await query<{ code: string }>('SELECT code FROM accounts WHERE legal_entity_id=?', [entityId]);
+  const available = new Set(rows.map(row => row.code));
+  return {
+    receivable: available.has('1-1200') ? '1-1200' : null,
+    cash: available.has('1-1100') ? '1-1100' : null,
+  };
+}
+
 organizationRouter.post('/units', requirePermission('unit.create'), async (req, res) => {
   const entity = await activeEntity();
   if (!entity) return res.status(404).json({ error: 'LEGAL_ENTITY_NOT_FOUND' });
 
-  const unitCode = upper(req.body?.unitCode);
   const unitName = text(req.body?.unitName);
   const levelId = text(req.body?.educationLevelId);
-  if (!UNIT_CODE_RE.test(unitCode)) return res.status(400).json({ error: 'UNIT_CODE_INVALID' });
   if (unitName.length < 3 || unitName.length > 150) return res.status(400).json({ error: 'UNIT_NAME_INVALID' });
   if (!levelId) return res.status(400).json({ error: 'UNIT_LEVEL_REQUIRED' });
 
-  const level = await one<any>('SELECT id,status FROM education_levels WHERE id=? AND legal_entity_id=?', [levelId, entity.id]);
+  const level = await one<any>('SELECT id,code,status FROM education_levels WHERE id=? AND legal_entity_id=?', [levelId, entity.id]);
   if (!level) return res.status(400).json({ error: 'LEVEL_OUTSIDE_ENTITY' });
   if (level.status !== 'ACTIVE') return res.status(400).json({ error: 'LEVEL_INACTIVE' });
 
+  // Unit baru langsung aktif; DRAFT hanya bila diminta eksplisit (data lama/uji).
+  const operationalStatus = upper(req.body?.operationalStatus) || 'ACTIVE';
+  if (!['ACTIVE', 'DRAFT'].includes(operationalStatus)) return res.status(400).json({ error: 'UNIT_STATUS_INVALID' });
+
+  let unitCode = upper(req.body?.unitCode);
+  if (unitCode) {
+    if (!UNIT_CODE_RE.test(unitCode)) return res.status(400).json({ error: 'UNIT_CODE_INVALID' });
+  } else {
+    unitCode = await nextUnitCode(entity.id, level.code);
+  }
+
+  if (await one('SELECT id FROM organization_units WHERE legal_entity_id=? AND unit_code=?', [entity.id, unitCode])) {
+    return res.status(409).json({ error: 'UNIT_CODE_DUPLICATE' });
+  }
+
   const groupId = nullableText(req.body?.schoolGroupId);
-  const schoolId = nullableText(req.body?.officialSchoolId);
-  const locationId = nullableText(req.body?.locationId);
+  const address = nullableText(req.body?.address);
+  const requestedSchoolId = nullableText(req.body?.officialSchoolId);
+  const requestedLocationId = nullableText(req.body?.locationId);
   const headUserId = nullableText(req.body?.headUserId);
-  const academicYearId = nullableText(req.body?.defaultAcademicYearId);
+  const requestedYearId = nullableText(req.body?.defaultAcademicYearId);
 
   for (const [table, id, label] of [
     ['school_groups', groupId, 'GROUP_OUTSIDE_ENTITY'],
-    ['official_schools', schoolId, 'SCHOOL_OUTSIDE_ENTITY'],
-    ['school_locations', locationId, 'LOCATION_OUTSIDE_ENTITY'],
-    ['academic_years', academicYearId, 'ACADEMIC_YEAR_OUTSIDE_ENTITY'],
+    ['official_schools', requestedSchoolId, 'SCHOOL_OUTSIDE_ENTITY'],
+    ['school_locations', requestedLocationId, 'LOCATION_OUTSIDE_ENTITY'],
+    ['academic_years', requestedYearId, 'ACADEMIC_YEAR_OUTSIDE_ENTITY'],
   ] as [string, string | null, string][]) {
     if (id && !(await one(`SELECT id FROM ${table} WHERE id=? AND legal_entity_id=?`, [id, entity.id]))) {
       return res.status(400).json({ error: label });
@@ -440,15 +520,18 @@ organizationRouter.post('/units', requirePermission('unit.create'), async (req, 
   if (headUserId && !(await one('SELECT id FROM users WHERE id=?', [headUserId]))) {
     return res.status(400).json({ error: 'HEAD_USER_NOT_FOUND' });
   }
-  if (await one('SELECT id FROM organization_units WHERE legal_entity_id=? AND unit_code=?', [entity.id, unitCode])) {
-    return res.status(409).json({ error: 'UNIT_CODE_DUPLICATE' });
-  }
 
-  const effectiveStart = nullableText(req.body?.effectiveStart);
+  // Sekolah resmi, lokasi, dan tahun ajaran tidak lagi wajib dipilih manual:
+  // dibuat otomatis bila tidak dikirim, supaya unit bisa langsung dipakai.
+  const schoolId = requestedSchoolId || await ensureOfficialSchool(entity.id, levelId, unitName);
+  const locationId = requestedLocationId || await ensureLocation(entity.id, unitName, address);
+  const academicYearId = requestedYearId || await ensureAcademicYear(entity.id);
+
+  const effectiveStart = nullableText(req.body?.effectiveStart) || isoToday();
   const effectiveEnd = nullableText(req.body?.effectiveEnd);
-  if (effectiveStart && !isDateOnly(effectiveStart)) return res.status(400).json({ error: 'EFFECTIVE_START_INVALID' });
+  if (!isDateOnly(effectiveStart)) return res.status(400).json({ error: 'EFFECTIVE_START_INVALID' });
   if (effectiveEnd && !isDateOnly(effectiveEnd)) return res.status(400).json({ error: 'EFFECTIVE_END_INVALID' });
-  if (effectiveStart && effectiveEnd && effectiveEnd < effectiveStart) {
+  if (effectiveEnd && effectiveEnd < effectiveStart) {
     return res.status(400).json({ error: 'EFFECTIVE_RANGE_INVALID' });
   }
 
@@ -459,16 +542,21 @@ organizationRouter.post('/units', requirePermission('unit.create'), async (req, 
   await exec(
     `INSERT INTO organization_units(
        id,legal_entity_id,education_level_id,school_group_id,official_school_id,location_id,
-       unit_code,unit_name,short_name,unit_type,address,head_user_id,default_academic_year_id,
+       unit_code,unit_name,short_name,unit_type,operational_status,address,head_user_id,default_academic_year_id,
        effective_start,effective_end,notes)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [id, entity.id, levelId, groupId, schoolId, locationId, unitCode, unitName,
-      nullableText(req.body?.shortName), unitType, nullableText(req.body?.address), headUserId,
+      nullableText(req.body?.shortName), unitType, operationalStatus, address, headUserId,
       academicYearId, effectiveStart, effectiveEnd, nullableText(req.body?.notes)],
   );
-  await exec('INSERT INTO unit_finance_settings(unit_id,account_mode) VALUES(?,?)', [
-    id, upper(req.body?.accountMode) || 'MIXED',
-  ]);
+  const accounts = await defaultAccountCodes(entity.id);
+  await exec(
+    'INSERT INTO unit_finance_settings(unit_id,account_mode,receivable_account_code,cash_account_code) VALUES(?,?,?,?)',
+    [id, upper(req.body?.accountMode) || 'MIXED',
+      nullableText(req.body?.receivableAccountCode) || accounts.receivable,
+      nullableText(req.body?.cashAccountCode) || accounts.cash],
+  );
+  await refreshFinanceStatus(id);
 
   const after = await one<any>(`${UNIT_SELECT} WHERE u.id=?`, [id]);
   await writeAudit({ ...auditContext(req, entity.id, id), action: 'UNIT_CREATE', entityType: 'ORGANIZATION_UNIT', entityId: id, after });
