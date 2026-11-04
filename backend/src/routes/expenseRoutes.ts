@@ -93,6 +93,15 @@ async function unitForExpense(req: any, res: any, unitId: string) {
   return unit;
 }
 
+/** Normalisasi tanggal-waktu ke format MySQL DATETIME (YYYY-MM-DD HH:MM:SS). */
+function mysqlDateTime(value: any): string | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 19).replace('T', ' ');
+  const raw = String(value).trim();
+  if (!raw) return null;
+  return raw.replace('T', ' ').slice(0, 19);
+}
+
 /** Rincian barang pengajuan pembelian: nama diketik manual, qty, satuan, harga satuan. */
 function parseExpenseLines(raw: any) {
   if (raw === undefined || raw === null) return { lines: [] as any[], error: null as string | null };
@@ -291,7 +300,8 @@ expenseRouter.get('/expenses', requirePermission('expense.view'), async (req, re
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const rows = await query(
-    `SELECT r.id,r.unit_id,r.request_number,r.request_date,r.due_date,r.payee_name,r.description,
+    `SELECT r.id,r.unit_id,r.request_number,r.request_date,r.due_date,r.payment_due_at,r.priority,
+            r.payee_name,r.description,
             r.amount,r.paid_amount,(r.amount - r.paid_amount) remaining,r.status,
             u.unit_code,u.unit_name,c.code category_code,c.name category_name,
             v.name vendor_name,cu.full_name created_by_name,
@@ -317,6 +327,9 @@ expenseRouter.post('/expenses', requirePermission('expense.create'), async (req,
   const dueDate = nullableText(req.body?.dueDate);
   const description = text(req.body?.description);
   const amountCents = toCents(req.body?.amount);
+  const priority = upper(req.body?.priority) || 'NORMAL';
+  const paymentDueRaw = nullableText(req.body?.paymentDueAt);
+  const paymentDueAt = paymentDueRaw ? paymentDueRaw.replace('T', ' ').slice(0, 19) : null;
   const shippingCents = toCents(req.body?.shippingCost ?? 0);
   const parsedLines = parseExpenseLines(req.body?.lines);
   const lines = parsedLines.lines;
@@ -331,6 +344,10 @@ expenseRouter.post('/expenses', requirePermission('expense.create'), async (req,
   if (dueDate && !isDateOnly(dueDate)) return res.status(400).json({ error: 'EXPENSE_DUE_DATE_INVALID' });
   if (dueDate && dueDate < requestDate) return res.status(400).json({ error: 'EXPENSE_DUE_BEFORE_REQUEST' });
   if (!Number.isFinite(shippingCents) || shippingCents < 0) return res.status(400).json({ error: 'EXPENSE_SHIPPING_INVALID' });
+  if (!['NORMAL', 'TINGGI', 'MENDESAK'].includes(priority)) return res.status(400).json({ error: 'EXPENSE_PRIORITY_INVALID' });
+  if (paymentDueAt && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(paymentDueAt)) {
+    return res.status(400).json({ error: 'EXPENSE_PAYMENT_DUE_INVALID' });
+  }
   if (parsedLines.error) return res.status(400).json({ error: parsedLines.error });
   if (!Number.isFinite(totalCents) || totalCents <= 0) return res.status(400).json({ error: 'EXPENSE_AMOUNT_INVALID' });
 
@@ -365,11 +382,11 @@ expenseRouter.post('/expenses', requirePermission('expense.create'), async (req,
 
     await conn.query(
       `INSERT INTO expense_requests(id,legal_entity_id,unit_id,expense_category_id,vendor_id,request_number,
-         request_date,due_date,payee_name,description,amount,shipping_cost,status,notes,created_by,
+         request_date,due_date,payment_due_at,payee_name,description,priority,amount,shipping_cost,status,notes,created_by,
          submitted_by,submitted_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, unit.legal_entity_id, unitId, categoryId, vendorId, requestNumber, requestDate, dueDate,
-        nullableText(req.body?.payeeName), description, fromCents(totalCents), fromCents(shippingCents),
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, unit.legal_entity_id, unitId, categoryId, vendorId, requestNumber, requestDate, dueDate, paymentDueAt,
+        nullableText(req.body?.payeeName), description, priority, fromCents(totalCents), fromCents(shippingCents),
         submit ? 'SUBMITTED' : 'DRAFT', nullableText(req.body?.notes), req.user!.id,
         submit ? req.user!.id : null, submit ? new Date() : null],
     );
@@ -398,6 +415,118 @@ expenseRouter.post('/expenses', requirePermission('expense.create'), async (req,
     after: { amount: Number(fromCents(totalCents)), shipping: Number(fromCents(shippingCents)), lines: lines.length, status: submit ? 'SUBMITTED' : 'DRAFT' },
   });
   res.status(201).json(await requestDetail(id));
+});
+
+expenseRouter.patch('/expenses/:id', requirePermission('expense.create'), async (req, res) => {
+  const existing = await loadRequestForAction(req, res);
+  if (!existing) return;
+  if (!['DRAFT', 'REJECTED'].includes(existing.status)) {
+    return res.status(409).json({ error: 'EXPENSE_INVALID_STATUS', status: existing.status });
+  }
+
+  const description = nullableText(req.body?.description) ?? existing.description;
+  if (description.length < 3) return res.status(400).json({ error: 'EXPENSE_DESCRIPTION_TOO_SHORT' });
+  const categoryId = nullableText(req.body?.expenseCategoryId) ?? existing.expense_category_id;
+  const category = await one<any>(
+    'SELECT id,status,expense_account_code FROM expense_categories WHERE id=? AND legal_entity_id=?',
+    [categoryId, existing.legal_entity_id],
+  );
+  if (!category || category.status !== 'ACTIVE') return res.status(400).json({ error: 'EXPENSE_CATEGORY_INVALID' });
+  if (!category.expense_account_code) return res.status(400).json({ error: 'EXPENSE_ACCOUNT_MAPPING_MISSING' });
+
+  const requestDate = nullableText(req.body?.requestDate) ?? existing.request_date;
+  if (!isDateOnly(String(requestDate).slice(0, 10))) return res.status(400).json({ error: 'EXPENSE_DATE_INVALID' });
+  const dueDate = req.body?.dueDate === undefined ? existing.due_date : nullableText(req.body.dueDate);
+
+  const vendorId = req.body?.vendorId === undefined ? existing.vendor_id : nullableText(req.body.vendorId);
+  if (vendorId) {
+    const vendor = await one('SELECT id FROM vendors WHERE id=? AND legal_entity_id=? AND status=?', [vendorId, existing.legal_entity_id, 'ACTIVE']);
+    if (!vendor) return res.status(400).json({ error: 'VENDOR_INVALID' });
+  }
+
+  const shippingCents = req.body?.shippingCost === undefined ? toCents(existing.shipping_cost) : toCents(req.body.shippingCost);
+  if (!Number.isFinite(shippingCents) || shippingCents < 0) return res.status(400).json({ error: 'EXPENSE_SHIPPING_INVALID' });
+
+  const priority = upper(req.body?.priority) || existing.priority || 'NORMAL';
+  if (!['NORMAL', 'TINGGI', 'MENDESAK'].includes(priority)) return res.status(400).json({ error: 'EXPENSE_PRIORITY_INVALID' });
+  const paymentDueAt = req.body?.paymentDueAt === undefined
+    ? mysqlDateTime(existing.payment_due_at)
+    : mysqlDateTime(req.body.paymentDueAt);
+  if (paymentDueAt && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(paymentDueAt)) {
+    return res.status(400).json({ error: 'EXPENSE_PAYMENT_DUE_INVALID' });
+  }
+
+  const parsedLines = parseExpenseLines(req.body?.lines);
+  if (parsedLines.error) return res.status(400).json({ error: parsedLines.error });
+  const replaceLines = req.body?.lines !== undefined;
+  const lines = parsedLines.lines;
+  let totalCents: number;
+  if (replaceLines && lines.length > 0) {
+    totalCents = lines.reduce((sum, line) => sum + line.amountCents, 0) + shippingCents;
+  } else if (replaceLines) {
+    totalCents = toCents(req.body?.amount ?? existing.amount);
+  } else {
+    totalCents = toCents(req.body?.amount ?? existing.amount);
+  }
+  if (!Number.isFinite(totalCents) || totalCents <= 0) return res.status(400).json({ error: 'EXPENSE_AMOUNT_INVALID' });
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE expense_requests SET expense_category_id=?,vendor_id=?,request_date=?,due_date=?,payment_due_at=?,priority=?,
+              payee_name=?,description=?,amount=?,shipping_cost=?,notes=? WHERE id=?`,
+      [categoryId, vendorId, requestDate, dueDate, paymentDueAt, priority,
+        nullableText(req.body?.payeeName ?? existing.payee_name),
+        description, fromCents(totalCents), fromCents(shippingCents), nullableText(req.body?.notes ?? existing.notes), existing.id],
+    );
+    if (replaceLines) {
+      await conn.query('DELETE FROM expense_request_lines WHERE expense_request_id=?', [existing.id]);
+      for (const line of lines) {
+        await conn.query(
+          `INSERT INTO expense_request_lines(id,legal_entity_id,expense_request_id,line_no,item_name,qty,uom,unit_price,amount,notes)
+           VALUES(?,?,?,?,?,?,?,?,?,?)`,
+          [randomUUID(), existing.legal_entity_id, existing.id, line.lineNo, line.itemName, line.qty, line.uom,
+            fromCents(line.unitPriceCents), fromCents(line.amountCents), line.notes],
+        );
+      }
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+
+  await writeAudit({
+    legalEntityId: existing.legal_entity_id, unitId: existing.unit_id, userId: req.user!.id, ip: req.ip || null,
+    action: 'EXPENSE_REQUEST_UPDATE', entityType: 'EXPENSE_REQUEST', entityId: existing.id,
+    after: { amount: Number(fromCents(totalCents)), shipping: Number(fromCents(shippingCents)), lines: lines.length },
+  });
+  res.json(await requestDetail(existing.id));
+});
+
+expenseRouter.delete('/expenses/:id', requirePermission('transaction.delete'), async (req, res) => {
+  const existing = await loadRequestForAction(req, res);
+  if (!existing) return;
+  if (toCents(existing.paid_amount) > 0) {
+    return res.status(409).json({ error: 'EXPENSE_HAS_PAYMENT' });
+  }
+  const mcm = await one<{ total: number }>('SELECT COUNT(*) total FROM payment_requests WHERE expense_request_id=?', [existing.id]);
+  if (Number(mcm?.total || 0) > 0) {
+    return res.status(409).json({ error: 'EXPENSE_HAS_PAYMENT_REQUEST' });
+  }
+  await query('DELETE FROM expense_request_lines WHERE expense_request_id=?', [existing.id]);
+  await query("DELETE FROM attachments WHERE entity_type='EXPENSE_REQUEST' AND entity_id=?", [existing.id]);
+  await query('DELETE FROM expense_requests WHERE id=?', [existing.id]);
+  await writeAudit({
+    legalEntityId: existing.legal_entity_id, unitId: existing.unit_id, userId: req.user!.id, ip: req.ip || null,
+    action: 'EXPENSE_REQUEST_DELETE', entityType: 'EXPENSE_REQUEST', entityId: existing.id,
+    before: { request_number: existing.request_number, amount: Number(existing.amount), status: existing.status },
+    reason: nullableText(req.body?.reason),
+  });
+  res.json({ ok: true, deleted: existing.id });
 });
 
 expenseRouter.get('/expenses/:id', requirePermission('expense.view'), async (req, res) => {

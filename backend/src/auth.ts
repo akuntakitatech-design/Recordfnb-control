@@ -9,6 +9,7 @@ export const ROLES = [
   'KEPALA_JENJANG',
   'KEPALA_CABANG',
   'BENDAHARA_CABANG',
+  'PURCHASING',
   'AUDITOR',
 ] as const;
 

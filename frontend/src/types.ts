@@ -6,6 +6,7 @@ export const ROLES = [
   'KEPALA_JENJANG',
   'KEPALA_CABANG',
   'BENDAHARA_CABANG',
+  'PURCHASING',
   'AUDITOR',
 ] as const;
 
@@ -19,6 +20,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   KEPALA_JENJANG: 'Kepala Jenjang',
   KEPALA_CABANG: 'Kepala Cabang',
   BENDAHARA_CABANG: 'Bendahara Cabang',
+  PURCHASING: 'Purchasing',
   AUDITOR: 'Auditor',
 };
 
@@ -36,6 +38,7 @@ export type Permission =
   | 'expense.view' | 'expense.create' | 'expense.manage'
   | 'expense.approve' | 'expense.pay' | 'expense.void'
   | 'payment_request.create' | 'payment_request.approve'
+  | 'attachment.upload' | 'transaction.delete'
   | 'accounting.view' | 'journal.post' | 'period.close' | 'coa.manage'
   | 'receivable.view';
 
@@ -495,6 +498,8 @@ export type ExpenseRow = {
   amount: string;
   paid_amount: string;
   remaining: string;
+  priority: 'NORMAL' | 'TINGGI' | 'MENDESAK';
+  payment_due_at: string | null;
   status: ExpenseStatus;
   unit_code: string;
   unit_name: string;

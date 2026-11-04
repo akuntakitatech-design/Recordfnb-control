@@ -11,6 +11,7 @@ HANYA untuk DB lokal/staging.
 Env: BASE, ADMIN_EMAIL, ADMIN_PASSWORD, RUN_SUFFIX (opsional, 4 karakter)
 Jalankan: uv run --with httpx python tests/payment_request_uat.py
 """
+import base64
 import os
 import sys
 import time
@@ -305,6 +306,111 @@ def main() -> int:
     check("audit MCM tercatat",
           {"PAYMENT_REQUEST_CREATE", "PAYMENT_REQUEST_APPROVE", "PAYMENT_REQUEST_POST"} <= actions,
           sorted(actions)[:6])
+
+    # --- 9. Edit & hapus permanen pengajuan
+    editable = staff.post("/api/v1/expenses", json={
+        "unitId": unit_id, "expenseCategoryId": category_id, "requestDate": "2026-08-01",
+        "description": f"Draft untuk edit {SUFFIX}", "shippingCost": 10000,
+        "priority": "MENDESAK", "paymentDueAt": "2026-08-02T15:30",
+        "lines": [{"itemName": "Map plastik", "qty": 5, "uom": "pcs", "unitPrice": 20000}],
+    })
+    check("draft untuk edit dibuat", editable.status_code == 201, editable.text[:90])
+    if editable.status_code != 201:
+        return summary()
+    editable_id = editable.json()["id"]
+    created_body = editable.json()
+    check("prioritas MENDESAK tersimpan", created_body.get("priority") == "MENDESAK", created_body.get("priority"))
+    check("batas waktu pembayaran tersimpan",
+          str(created_body.get("payment_due_at") or "").replace(" ", "T").startswith("2026-08-02T15:30"),
+          created_body.get("payment_due_at"))
+    check("prioritas default NORMAL", second.get("priority") == "NORMAL", second.get("priority"))
+
+    bad_priority = staff.post("/api/v1/expenses", json={
+        "unitId": unit_id, "expenseCategoryId": category_id, "requestDate": "2026-08-01",
+        "description": f"Prioritas salah {SUFFIX}", "amount": 50000, "priority": "RENDAH",
+    })
+    check("prioritas tidak dikenal ditolak",
+          bad_priority.status_code == 400 and bad_priority.json().get("error") == "EXPENSE_PRIORITY_INVALID",
+          bad_priority.text[:90])
+
+    bad_due = staff.post("/api/v1/expenses", json={
+        "unitId": unit_id, "expenseCategoryId": category_id, "requestDate": "2026-08-01",
+        "description": f"Batas bayar salah {SUFFIX}", "amount": 50000, "paymentDueAt": "besok sore",
+    })
+    check("batas waktu tidak valid ditolak",
+          bad_due.status_code == 400 and bad_due.json().get("error") == "EXPENSE_PAYMENT_DUE_INVALID",
+          bad_due.text[:90])
+
+    patched_priority = staff.patch(f"/api/v1/expenses/{editable_id}", json={"priority": "TINGGI"})
+    check("prioritas bisa diubah saat edit",
+          patched_priority.status_code == 200 and patched_priority.json().get("priority") == "TINGGI",
+          patched_priority.text[:90])
+
+    listed_expenses = admin.get(f"/api/v1/expenses?q={SUFFIX}&pageSize=100").json().get("rows", [])
+    list_row = next((row for row in listed_expenses if row.get("id") == editable_id), None)
+    check("daftar pengajuan memuat prioritas & batas bayar",
+          bool(list_row) and list_row.get("priority") == "TINGGI"
+          and str(list_row.get("payment_due_at") or "").replace(" ", "T").startswith("2026-08-02T15:30"),
+          (list_row or {}).get("priority"))
+
+    edited = staff.patch(f"/api/v1/expenses/{editable_id}", json={
+        "description": f"Draft sudah diedit {SUFFIX}", "shippingCost": 15000,
+        "lines": [
+            {"itemName": "Map plastik", "qty": 6, "uom": "pcs", "unitPrice": 20000},
+            {"itemName": "Lakban", "qty": 2, "uom": "roll", "unitPrice": 12000},
+        ],
+    })
+    check("edit pengajuan draft", edited.status_code == 200, edited.text[:90])
+    if edited.status_code == 200:
+        body = edited.json()
+        check("total setelah edit", num(body["amount"]) == 6 * 20000 + 2 * 12000 + 15000, body["amount"])
+        check("rincian diganti (2 baris)", len(body.get("lines") or []) == 2, len(body.get("lines") or []))
+
+    # --- 10. Lampiran multi-file
+    files = [
+        {"name": "nota.png", "mimeType": "image/png", "dataBase64": base64.b64encode(b"PNGDATA-1").decode()},
+        {"name": "penawaran.pdf", "mimeType": "application/pdf", "dataBase64": base64.b64encode(b"PDFDATA-2").decode()},
+    ]
+    uploaded = staff.post("/api/v1/attachments", json={"entityType": "EXPENSE_REQUEST", "entityId": editable_id, "files": files})
+    check("unggah 2 lampiran sekaligus", uploaded.status_code == 201 and uploaded.json().get("count") == 2, uploaded.text[:90])
+    listed = admin.get(f"/api/v1/attachments?entityType=EXPENSE_REQUEST&entityId={editable_id}").json()
+    check("daftar lampiran berisi 2 file", isinstance(listed, list) and len(listed) == 2,
+          len(listed) if isinstance(listed, list) else listed)
+    if isinstance(listed, list) and listed:
+        download = admin.get(f"/api/v1/attachments/{listed[0]['id']}/download")
+        check("unduh lampiran", download.status_code == 200 and len(download.content) > 0, download.status_code)
+        removed = admin.delete(f"/api/v1/attachments/{listed[0]['id']}")
+        check("hapus satu lampiran", removed.status_code == 200, removed.status_code)
+
+    # --- 11. Hapus permanen hanya untuk role berwenang
+    remaining_attachment = listed[1]["id"] if isinstance(listed, list) and len(listed) > 1 else None
+    forbidden_delete = staff.delete(f"/api/v1/expenses/{editable_id}")
+    check("bendahara tidak boleh hapus permanen", forbidden_delete.status_code == 403, forbidden_delete.status_code)
+    deleted = admin.request("DELETE", f"/api/v1/expenses/{editable_id}", json={"reason": "UAT hapus"})
+    check("hapus permanen pengajuan", deleted.status_code == 200, deleted.text[:90])
+    check("pengajuan terhapus (404)", admin.get(f"/api/v1/expenses/{editable_id}").status_code == 404)
+    if remaining_attachment:
+        orphan = admin.get(f"/api/v1/attachments/{remaining_attachment}/download")
+        check("lampiran ikut terhapus", orphan.status_code == 404, orphan.status_code)
+    else:
+        check("lampiran ikut terhapus", False, "tidak ada lampiran tersisa untuk diuji")
+
+    blocked_delete = admin.delete(f"/api/v1/expenses/{request_id}")
+    check("hapus pengajuan berbayar ditolak", blocked_delete.status_code == 409,
+          (blocked_delete.status_code, blocked_delete.text[:70]))
+
+    # --- 12. Edit & hapus MCM draft
+    mcm_edit = finance.post("/api/v1/payment-requests", json={
+        "expenseRequestId": second["id"], "bankAccountId": bank_account_id,
+        "requestDate": "2026-08-05", "amount": 100000,
+    })
+    check("MCM draft untuk edit dibuat", mcm_edit.status_code == 201, mcm_edit.text[:90])
+    if mcm_edit.status_code == 201:
+        mcm_edit_id = mcm_edit.json()["id"]
+        patched = finance.patch(f"/api/v1/payment-requests/{mcm_edit_id}", json={"amount": 120000})
+        check("edit nominal MCM", patched.status_code == 200 and num(patched.json().get("amount")) == 120000, patched.text[:90])
+        removed_mcm = admin.delete(f"/api/v1/payment-requests/{mcm_edit_id}")
+        check("hapus MCM draft", removed_mcm.status_code == 200, removed_mcm.text[:90])
 
     return summary()
 

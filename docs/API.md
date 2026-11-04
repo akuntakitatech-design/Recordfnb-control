@@ -167,14 +167,14 @@ menampilkan rekening yang berizin untuk unit terpilih. Daftar rekening dibatasi 
 | GET/POST/PATCH | `/api/v1/expense-categories[/{id}]` | `expense.view` / `expense.manage` |
 | GET/POST/PATCH | `/api/v1/vendors[/{id}]` | `expense.view` / `expense.manage` |
 | GET/POST | `/api/v1/expenses` | `expense.view` / `expense.create` |
-| GET | `/api/v1/expenses/{id}` | `expense.view` |
+| GET/PATCH/DELETE | `/api/v1/expenses/{id}` | `expense.view` / `expense.create` / `transaction.delete` |
 | POST | `/api/v1/expenses/{id}/submit`, `/cancel` | `expense.create` |
 | POST | `/api/v1/expenses/{id}/approve`, `/reject` | `expense.approve` |
 | GET | `/api/v1/expense-payments` | `expense.view` |
 | POST | `/api/v1/expenses/{id}/payments` | `expense.pay` |
 | POST | `/api/v1/expense-payments/{id}/void` | `expense.void` |
 | GET/POST | `/api/v1/payment-requests` | `expense.view` / `payment_request.create` |
-| GET | `/api/v1/payment-requests/{id}` | `expense.view` |
+| GET/PATCH/DELETE | `/api/v1/payment-requests/{id}` | `expense.view` / `payment_request.create` / `transaction.delete` |
 | POST | `/api/v1/payment-requests/{id}/submit`, `/cancel` | `payment_request.create` |
 | POST | `/api/v1/payment-requests/{id}/approve`, `/reject` | `payment_request.approve` |
 | POST | `/api/v1/payment-requests/{id}/post` | `expense.pay` |
@@ -202,6 +202,53 @@ pengajuan pada tanggal bayar. Total pembayaran ≤ sisa pengajuan → `409 PAYME
 Unit penanggung beban tetap unit pengajuan meskipun rekeningnya rekening pusat.
 
 `expenseAccountCode` pada jenis biaya wajib ada di CoA bertipe `EXPENSE` → `400 EXPENSE_ACCOUNT_MAPPING_MISSING`.
+
+### 8.1 Prioritas & batas waktu pembayaran
+
+`POST /expenses` dan `PATCH /expenses/{id}` menerima:
+
+| Field | Nilai | Keterangan |
+|---|---|---|
+| `priority` | `NORMAL` (default) · `TINGGI` · `MENDESAK` | nilai lain → `400 EXPENSE_PRIORITY_INVALID` |
+| `paymentDueAt` | `YYYY-MM-DD HH:MM` atau `YYYY-MM-DDTHH:MM` | `null` = tanpa batas waktu; format salah → `400 EXPENSE_PAYMENT_DUE_INVALID` |
+
+Keduanya dikembalikan pada detail **dan** daftar pengajuan (`priority`, `payment_due_at`), sehingga UI
+bisa menampilkan badge prioritas + hitung mundur batas bayar (`Lewat batas:` bila sudah lewat, diabaikan
+untuk status `PAID`/`CANCELLED`/`REJECTED`).
+
+### 8.2 Edit & hapus permanen
+
+- `PATCH /expenses/{id}` — hanya status `DRAFT`/`REJECTED`; boleh mengganti kategori, vendor, tanggal,
+rincian `lines[]` (diganti seluruhnya bila dikirim), ongkir, prioritas, dan batas bayar. Status lain →
+`409 EXPENSE_INVALID_STATUS`. Total tetap dihitung server.
+- `PATCH /payment-requests/{id}` — hanya `DRAFT`/`REJECTED`; mengganti rekening, tanggal, metode, nominal,
+catatan. Nominal tetap ≤ sisa pengajuan (`409 PAYMENT_EXCEEDS_REMAINING`).
+- `DELETE /expenses/{id}` — **hapus permanen** (`transaction.delete`, hanya `ADMIN_YAYASAN`). Menghapus
+rincian, MCM, dan lampiran. Ditolak bila sudah ada pembayaran (`409 EXPENSE_HAS_PAYMENT`) atau MCM
+(`409 EXPENSE_HAS_PAYMENT_REQUEST`). Audit `EXPENSE_REQUEST_DELETE` menyimpan nomor, nominal, status, dan alasan.
+- `DELETE /payment-requests/{id}` — hapus permanen MCM (`transaction.delete`). Status `POSTED` ditolak
+`409 PAYMENT_REQUEST_POSTED`; lampiran MCM ikut terhapus.
+
+## 8A. Lampiran dokumen
+
+| Method | Endpoint | Permission |
+|---|---|---|
+| GET | `/api/v1/attachments?entityType=&entityId=` | `expense.view` (dicek scope unit) |
+| POST | `/api/v1/attachments` | `attachment.upload` |
+| GET | `/api/v1/attachments/{id}/download` | login + scope unit |
+| DELETE | `/api/v1/attachments/{id}` | `transaction.delete` atau pengunggah |
+
+`entityType`: `EXPENSE_REQUEST`, `PAYMENT_REQUEST`, `INVOICE`, `RECEIPT`, `EXPENSE_PAYMENT`, `JOURNAL`.
+Unggah memakai JSON base64 agar tidak butuh multipart:
+
+```json
+{ "entityType": "EXPENSE_REQUEST", "entityId": "<uuid>",
+  "files": [{ "name": "nota.pdf", "mimeType": "application/pdf", "dataBase64": "..." }] }
+```
+
+Batas: **10 file per permintaan**, **5 MB per file** → `400 ATTACHMENT_TOO_MANY_FILES` /
+`400 ATTACHMENT_FILE_TOO_LARGE` / `400 ATTACHMENT_FILE_INVALID`. Body route ini memakai limit 60 MB.
+Isi file disimpan di kolom `MEDIUMBLOB` tabel `attachments` (rencana lanjut: object storage R2).
 
 ## 9. Akuntansi (ACC-01)
 
@@ -265,20 +312,25 @@ dokumen sumber dengan `document_number`, `document_date`, `amount`, `party`, `re
 
 ## 11. Matriks permission per role
 
-| Grup permission | PIMPINAN | ADMIN | FINANCE | ACCOUNTING | KEPALA JENJANG | KEPALA CABANG | BENDAHARA | AUDITOR |
-|---|---|---|---|---|---|---|---|---|
-| Struktur & master unit | view | kelola | view | view | view | view | view | view |
-| Rekening & mapping | view | kelola | kelola | view | – | – | – | view |
-| Siswa & tarif | view | kelola | view | kelola tarif | view | view | siswa | view |
-| Tagihan | view | generate, void | generate, void | void | view | view | generate | view |
-| Penerimaan | view | create, void | create, void | void | view | view | create | view |
-| Pengeluaran | view, approve | penuh | penuh | approve, void | approve | create, approve | create, pay | view |
-| Akuntansi | view | view + CoA | view | penuh | view | view | view | view |
-| Laporan | view | view | view | view | view | view | view | view |
-| Pengguna & audit | audit | penuh | – | audit | – | – | – | audit |
+| Grup permission | PIMPINAN | ADMIN | FINANCE | ACCOUNTING | KEPALA JENJANG | KEPALA CABANG | BENDAHARA | PURCHASING | AUDITOR |
+|---|---|---|---|---|---|---|---|---|---|
+| Struktur & master unit | view | kelola | view | view | view | view | view | view | view |
+| Rekening & mapping | view | kelola | kelola | view | – | – | – | – | view |
+| Siswa & tarif | view | kelola | view | kelola tarif | view | view | siswa | view | view |
+| Tagihan | view | generate, void | generate, void | void | view | view | generate | view | view |
+| Penerimaan | view | create, void | create, void | void | view | view | create | view | view |
+| Pengeluaran | view, approve | penuh | penuh | approve, void | approve | create, approve | create, pay | create | view |
+| Lampiran | view | unggah, hapus | unggah | view | view | unggah | unggah | unggah | view |
+| Hapus permanen transaksi | – | ya | – | – | – | – | – | – | – |
+| Akuntansi | view | view + CoA | view | penuh | view | view | view | – | view |
+| Laporan | view | view | view | view | view | view | view | view | view |
+| Pengguna & audit | audit | penuh | – | audit | – | – | – | – | audit |
 
 Role pusat (`PIMPINAN`, `ADMIN_YAYASAN`, `FINANCE_PUSAT`, `ACCOUNTING_PUSAT`, `AUDITOR`) melihat semua unit.
-Role cabang (`KEPALA_JENJANG`, `KEPALA_CABANG`, `BENDAHARA_CABANG`) dibatasi `user_unit_access`.
+Role cabang (`KEPALA_JENJANG`, `KEPALA_CABANG`, `BENDAHARA_CABANG`, `PURCHASING`) dibatasi `user_unit_access`.
+
+**Hapus permanen** (`transaction.delete`) hanya dimiliki `ADMIN_YAYASAN` — dipakai untuk pengajuan pembelian
+dan MCM. Role lain harus memakai pembatalan (VOID/CANCEL) agar jejak audit tetap ada.
 
 ## 12. Daftar kode error
 
@@ -304,7 +356,15 @@ Role cabang (`KEPALA_JENJANG`, `KEPALA_CABANG`, `BENDAHARA_CABANG`) dibatasi `us
 | `EXPENSE_SELF_APPROVAL_FORBIDDEN` | 403 | Maker-checker: pengaju tidak boleh menyetujui sendiri |
 | `EXPENSE_NOT_APPROVED` | 409 | Pembayaran sebelum persetujuan |
 | `PAYMENT_EXCEEDS_REMAINING` | 409 | Pembayaran melebihi sisa pengajuan |
-| `EXPENSE_HAS_PAYMENT` | 409 | Pengajuan berbayar tidak bisa dibatalkan |
+| `EXPENSE_HAS_PAYMENT` | 409 | Pengajuan berbayar tidak bisa dibatalkan / dihapus |
+| `EXPENSE_HAS_PAYMENT_REQUEST` | 409 | Pengajuan sudah punya MCM — hapus MCM dulu |
+| `EXPENSE_INVALID_STATUS` | 409 | Status tidak mendukung edit (bukan Draft/Ditolak) |
+| `EXPENSE_PRIORITY_INVALID` | 400 | Prioritas bukan `NORMAL`/`TINGGI`/`MENDESAK` |
+| `EXPENSE_PAYMENT_DUE_INVALID` | 400 | Format `paymentDueAt` salah |
+| `PAYMENT_REQUEST_POSTED` | 409 | MCM sudah diposting — batalkan pembayarannya, bukan dihapus |
+| `ATTACHMENT_TARGET_INVALID` / `NOT_FOUND` | 400/404 | Entitas lampiran tidak dikenal / tidak ada |
+| `ATTACHMENT_FILES_REQUIRED` / `TOO_MANY_FILES` | 400 | Tidak ada file / lebih dari 10 file |
+| `ATTACHMENT_FILE_INVALID` / `FILE_TOO_LARGE` | 400 | Base64 rusak / file > 5 MB |
 | `ACCOUNT_MAPPING_MISSING` | 400 | Akun tidak ada di CoA / tidak postable |
 | `JOURNAL_NOT_BALANCED` | 409 | Debit ≠ kredit |
 | `JOURNAL_NOT_REVERSIBLE` | 409 | Jurnal sudah dibalik / bukan ORIGINAL |

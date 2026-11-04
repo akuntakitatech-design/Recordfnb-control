@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Check, Plus, Send, Wallet, X } from 'lucide-react';
+import { Check, Pencil, Plus, Send, Trash2, Wallet, X } from 'lucide-react';
 import { api, messageOf } from '../api';
 import { Modal } from '../components/Modal';
+import { Attachments } from '../components/Attachments';
 import { dateID, money, todayISO } from '../format';
 import { StatusBadge } from './Organization';
 import type {
@@ -31,9 +32,13 @@ export function Expenses({ session }: { session: Session }) {
   const [loading, setLoading] = useState(true);
 
   const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<ExpenseRow | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
   const [form, setForm] = useState({
     unitId: '', expenseCategoryId: '', vendorId: '', requestDate: todayISO(),
     dueDate: '', payeeName: '', description: '', amount: '', notes: '', shippingCost: '',
+    priority: 'NORMAL', paymentDueAt: '',
     lines: [] as LineForm[],
   });
   const [formError, setFormError] = useState('');
@@ -160,12 +165,72 @@ export function Expenses({ session }: { session: Session }) {
   }
 
   function openCreate() {
+    setEditingId(null);
     setForm(current => ({
       ...current, expenseCategoryId: '', vendorId: '', description: '', amount: '', notes: '',
       dueDate: '', payeeName: '', shippingCost: '', lines: [],
+      priority: 'NORMAL', paymentDueAt: '',
     }));
     setFormError('');
     setCreating(true);
+  }
+
+  async function openEdit(row: ExpenseRow) {
+    try {
+      const detail = await api<ExpenseDetail>(`/api/v1/expenses/${row.id}`);
+      setForm({
+        unitId: detail.unit_id,
+        expenseCategoryId: detail.expense_category_id,
+        vendorId: detail.vendor_id || '',
+        requestDate: String(detail.request_date).slice(0, 10),
+        dueDate: detail.due_date ? String(detail.due_date).slice(0, 10) : '',
+        payeeName: detail.payee_name || '',
+        description: detail.description,
+        amount: String(Number(detail.amount)),
+        notes: detail.notes || '',
+        priority: detail.priority || 'NORMAL',
+        paymentDueAt: detail.payment_due_at ? String(detail.payment_due_at).slice(0, 16).replace(' ', 'T') : '',
+        shippingCost: detail.shipping_cost ? String(Number(detail.shipping_cost)) : '',
+        lines: (detail.lines || []).map(line => ({
+          itemName: line.item_name, qty: String(Number(line.qty)),
+          uom: line.uom || '', unitPrice: String(Number(line.unit_price)),
+        })),
+      });
+      setEditingId(row.id);
+      setFormError('');
+      setCreating(true);
+    } catch (editError) {
+      setError(messageOf(editError));
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    setError('');
+    try {
+      await api(`/api/v1/expenses/${deleting.id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ reason: deleteReason || null }),
+      });
+      setNotice(`Pengajuan ${deleting.request_number} dihapus permanen.`);
+      setDeleting(null);
+      setDeleteReason('');
+      await refresh();
+    } catch (deleteError) {
+      setError(messageOf(deleteError));
+    }
+  }
+
+  async function deleteMcm(row: PaymentRequestRow) {
+    if (!window.confirm(`Hapus permanen MCM ${row.request_number}?`)) return;
+    setError('');
+    try {
+      await api(`/api/v1/payment-requests/${row.id}`, { method: 'DELETE', body: JSON.stringify({}) });
+      setNotice(`MCM ${row.request_number} dihapus.`);
+      await refresh();
+    } catch (mcmDeleteError) {
+      setError(messageOf(mcmDeleteError));
+    }
   }
 
   const lineTotal = (line: LineForm) => Number(line.qty || 0) * Number(line.unitPrice || 0);
@@ -185,13 +250,24 @@ export function Expenses({ session }: { session: Session }) {
     setForm(current => ({ ...current, lines: current.lines.filter((_, i) => i !== index) }));
   }
 
+  function deadlineInfo(iso: string | null) {
+    if (!iso) return null;
+    const when = new Date(String(iso).replace(' ', 'T'));
+    if (Number.isNaN(when.getTime())) return null;
+    return {
+      label: when.toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }),
+      overdue: when.getTime() < Date.now(),
+    };
+  }
+
   async function submitCreate(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
     setFormError('');
     try {
-      const result = await api<ExpenseDetail>('/api/v1/expenses', {
-        method: 'POST',
+      const path = editingId ? `/api/v1/expenses/${editingId}` : '/api/v1/expenses';
+      const result = await api<ExpenseDetail>(path, {
+        method: editingId ? 'PATCH' : 'POST',
         body: JSON.stringify({
           unitId: form.unitId,
           expenseCategoryId: form.expenseCategoryId,
@@ -202,6 +278,8 @@ export function Expenses({ session }: { session: Session }) {
           description: form.description,
           amount: Number(form.amount || 0),
           shippingCost: Number(form.shippingCost || 0),
+          priority: form.priority,
+          paymentDueAt: form.paymentDueAt ? form.paymentDueAt.replace('T', ' ') : null,
           lines: form.lines.map(line => ({
             itemName: line.itemName, qty: Number(line.qty || 0), uom: line.uom || null,
             unitPrice: Number(line.unitPrice || 0),
@@ -209,7 +287,10 @@ export function Expenses({ session }: { session: Session }) {
           notes: form.notes || null,
         }),
       });
-      setNotice(`Pengajuan ${result.request_number} tersimpan sebagai draft.`);
+      setNotice(editingId
+        ? `Pengajuan ${result.request_number} diperbarui.`
+        : `Pengajuan ${result.request_number} tersimpan sebagai draft.`);
+      setEditingId(null);
       setCreating(false);
       await refresh();
     } catch (submitError) {
@@ -410,10 +491,40 @@ export function Expenses({ session }: { session: Session }) {
                     <td style={{ textAlign: 'right' }}>{money(row.amount)}</td>
                     <td style={{ textAlign: 'right' }}>{money(row.paid_amount)}</td>
                     <td style={{ textAlign: 'right' }}>{money(row.remaining)}</td>
-                    <td><StatusBadge value={row.status} /></td>
+                    <td>
+                      <StatusBadge value={row.status} />
+                      <div style={{ marginTop: 4, fontSize: 12 }}>
+                        <span style={{
+                          fontWeight: row.priority === 'MENDESAK' ? 700 : 500,
+                          color: row.priority === 'MENDESAK' ? 'var(--danger, #c0392b)' : row.priority === 'TINGGI' ? '#b7791f' : 'inherit',
+                        }}>
+                          {row.priority || 'NORMAL'}
+                        </span>
+                        {(() => {
+                          const info = deadlineInfo(row.payment_due_at);
+                          if (!info || ['PAID', 'CANCELLED', 'REJECTED'].includes(row.status)) return null;
+                          return (
+                            <div style={{ color: info.overdue ? 'var(--danger, #c0392b)' : 'inherit' }}>
+                              {info.overdue ? 'Lewat batas: ' : 'Batas bayar: '}{info.label}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </td>
                     <td>
                       <div className="cell-actions">
                         <button type="button" className="link-button" onClick={() => void openDetail(row)}>Detail</button>
+                        {can('expense.create') && ['DRAFT', 'REJECTED'].includes(row.status) && (
+                          <button type="button" className="link-button" onClick={() => void openEdit(row)} data-testid={`expense-edit-${row.id}`}>
+                            <Pencil size={14} /> Edit
+                          </button>
+                        )}
+                        {can('transaction.delete') && (
+                          <button type="button" className="link-button danger" data-testid={`expense-delete-${row.id}`}
+                            onClick={() => { setDeleteReason(''); setDeleting(row); }}>
+                            <Trash2 size={14} /> Hapus
+                          </button>
+                        )}
                         {can('expense.create') && ['DRAFT', 'REJECTED'].includes(row.status) && (
                           <button type="button" className="link-button"
                             onClick={() => void act(`/api/v1/expenses/${row.id}/submit`, {}, `Pengajuan ${row.request_number} diajukan.`)}>
@@ -601,6 +712,11 @@ export function Expenses({ session }: { session: Session }) {
                             <Wallet size={14} /> Posting
                           </button>
                         )}
+                        {can('transaction.delete') && row.status !== 'POSTED' && (
+                          <button type="button" className="link-button danger" onClick={() => void deleteMcm(row)}>
+                            <Trash2 size={14} /> Hapus
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -698,7 +814,7 @@ export function Expenses({ session }: { session: Session }) {
       )}
 
       {creating && (
-        <Modal title="Ajukan Pengeluaran" onClose={() => setCreating(false)} maxWidth={820}>
+        <Modal title={editingId ? 'Edit Pengajuan Pembelian' : 'Ajukan Pengeluaran'} onClose={() => { setCreating(false); setEditingId(null); }} maxWidth={820}>
           <form onSubmit={submitCreate}>
             <div className="form-grid">
               <label className="field">Unit penanggung beban
@@ -724,6 +840,18 @@ export function Expenses({ session }: { session: Session }) {
               <label className="field">Jatuh tempo (opsional)
                 <input type="date" className="input" value={form.dueDate}
                   onChange={event => setForm({ ...form, dueDate: event.target.value })} />
+              </label>
+              <label className="field">Prioritas
+                <select className="select" value={form.priority}
+                  onChange={event => setForm({ ...form, priority: event.target.value })} data-testid="expense-priority">
+                  <option value="NORMAL">Normal</option>
+                  <option value="TINGGI">Tinggi</option>
+                  <option value="MENDESAK">Mendesak</option>
+                </select>
+              </label>
+              <label className="field">Batas waktu pembayaran (opsional)
+                <input type="datetime-local" className="input" value={form.paymentDueAt}
+                  onChange={event => setForm({ ...form, paymentDueAt: event.target.value })} data-testid="expense-payment-due" />
               </label>
               <label className="field">Biaya pengiriman (Rp)
                 <input className="input" inputMode="numeric" value={form.shippingCost}
@@ -926,6 +1054,21 @@ export function Expenses({ session }: { session: Session }) {
         </Modal>
       )}
 
+      {deleting && (
+        <Modal title={`Hapus pengajuan ${deleting.request_number}`} onClose={() => setDeleting(null)} maxWidth={560}>
+          <p>Pengajuan, rincian barang, dan lampirannya akan <strong>dihapus permanen</strong>. Tindakan ini tidak bisa dibatalkan.</p>
+          <label className="field" style={{ marginTop: 12 }}>Alasan (opsional)
+            <input className="input" value={deleteReason} onChange={event => setDeleteReason(event.target.value)} />
+          </label>
+          <div className="modal-actions">
+            <button type="button" className="ghost-button" onClick={() => setDeleting(null)}>Batal</button>
+            <button type="button" className="primary-button danger-button" onClick={() => void confirmDelete()} data-testid="expense-delete-confirm">
+              Hapus permanen
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {detail && (
         <Modal title={`Pengajuan ${detail.request_number}`} onClose={() => setDetail(null)} maxWidth={760}>
           {detailError && <div className="form-error">{detailError}</div>}
@@ -973,6 +1116,8 @@ export function Expenses({ session }: { session: Session }) {
               </div>
             </div>
           )}
+
+          <Attachments entityType="EXPENSE_REQUEST" entityId={detail.id} />
 
           {(detail.paymentRequests || []).length > 0 && (
             <div style={{ marginTop: 16 }}>

@@ -13,7 +13,7 @@ curl -s http://127.0.0.1:4100/api/health
 export ADMIN_EMAIL=admin@sekolah.test
 export ADMIN_PASSWORD='...'
 cd tests
-for suite in foundation organization_master billing receipt expense accounting report; do
+for suite in foundation organization_master payment_request billing receipt expense accounting report; do
   uv run --with httpx python ${suite}_uat.py
 done
 ```
@@ -29,13 +29,13 @@ dijalankan berulang pada DB yang sama.
 |---|---|---|
 | `tests/foundation_uat.py` | FD-01…FD-05 + reset password | **34/34 lulus** |
 | `tests/organization_master_uat.py` | Kelola master (edit/nonaktif/hapus) | **13/13 lulus** |
-| `tests/payment_request_uat.py` | T24 pembelian + MCM | **40/40 lulus** |
+| `tests/payment_request_uat.py` | T24 pembelian + MCM + T25 lampiran/edit/hapus/prioritas | **63/63 lulus** |
 | `tests/billing_uat.py` | BILL-01 | **25/25 lulus** |
 | `tests/receipt_uat.py` | FC-01 penerimaan | **51/51 lulus** |
 | `tests/expense_uat.py` | FC-01 pengeluaran | **52/52 lulus** |
 | `tests/accounting_uat.py` | ACC-01 | **45/45 lulus** |
 | `tests/report_uat.py` | RPT-01 | **31/31 lulus** |
-| **Total** | | **291/291 lulus** |
+| **Total** | | **314/314 lulus** |
 
 ## Matriks T01–T20
 
@@ -78,6 +78,7 @@ dijalankan berulang pada DB yang sama.
 | Kelola master organisasi (**T22**) | `organization_master_uat` — hapus jenjang yang masih dipakai → `409 MASTER_IN_USE` (rincian `references`); `PATCH status` menonaktifkan & mengaktifkan kembali; hapus master tanpa relasi → 200; `PUT academic-years/{id}` menyimpan perubahan; audit mencatat `LEVEL_STATUS`, `LEVEL_DELETE`, `ACADEMIC_YEAR_UPDATE` |
 | Setup yayasan/sekolah disederhanakan (**T23**) | `foundation_uat` — unit baru **langsung ACTIVE** tanpa langkah aktivasi; kode unit otomatis `TK-xx`; sekolah resmi + lokasi + tahun ajaran terisi otomatis; `effectiveStart` default hari ini; sekolah resmi baru otomatis `VERIFIED`; UI master hanya **Edit · Hapus** dan tab Kelompok Sekolah tidak ditampilkan |
 | Pembelian + MCM (**T24**) | `payment_request_uat` — total pengajuan = Σ(qty×harga)+ongkir; qty 0 ditolak; MCM untuk pengajuan belum disetujui 409; MCM melebihi sisa 409; finance tidak bisa menyetujui MCM sendiri 403; Ketua menyetujui 200; posting membuat pembayaran + mutasi `OUT` + jurnal; DP lalu pelunasan → pengajuan `PAID`; MCM ditolak bisa diajukan ulang; audit `PAYMENT_REQUEST_*` tercatat |
+| Prioritas, batas bayar, lampiran, edit & hapus permanen (**T25**) | `payment_request_uat` — prioritas default `NORMAL`; `MENDESAK` tersimpan; nilai prioritas asing → `400 EXPENSE_PRIORITY_INVALID`; `paymentDueAt` tersimpan dan muncul di **daftar** maupun detail; format salah → `400 EXPENSE_PAYMENT_DUE_INVALID`; prioritas bisa diubah lewat `PATCH`; unggah 2 lampiran sekali kirim (`count=2`), daftar 2 file, unduh 200, hapus 1 lampiran 200; bendahara **403** saat hapus permanen; `ADMIN_YAYASAN` menghapus pengajuan → 200, detail 404, lampiran ikut hilang (unduhan 404); pengajuan berbayar → `409 EXPENSE_HAS_PAYMENT`; MCM Draft bisa diedit nominalnya dan dihapus permanen |
 
 ## Yang sengaja tidak diuji di otomasi
 

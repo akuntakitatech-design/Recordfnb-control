@@ -152,6 +152,73 @@ paymentRequestRouter.post('/payment-requests', requirePermission('payment_reques
   res.status(201).json(await paymentRequestDetail(id));
 });
 
+paymentRequestRouter.patch('/payment-requests/:id', requirePermission('payment_request.create'), async (req, res) => {
+  const detail = await loadForAction(req, res, 'payment_request.create');
+  if (!detail) return;
+  if (!['DRAFT', 'REJECTED'].includes(detail.status)) {
+    return res.status(409).json({ error: 'PAYMENT_REQUEST_INVALID_STATUS', status: detail.status });
+  }
+
+  const bankAccountId = nullableText(req.body?.bankAccountId) ?? detail.bank_account_id;
+  const requestDate = nullableText(req.body?.requestDate) ?? String(detail.request_date).slice(0, 10);
+  const method = upper(req.body?.method) || detail.method;
+  const amountCents = req.body?.amount === undefined ? toCents(detail.amount) : toCents(req.body.amount);
+  if (!isDateOnly(requestDate)) return res.status(400).json({ error: 'PAYMENT_DATE_INVALID' });
+  if (!METHODS.includes(method)) return res.status(400).json({ error: 'PAYMENT_METHOD_INVALID' });
+  if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: 'PAYMENT_AMOUNT_INVALID' });
+
+  const request = await one<any>(
+    'SELECT amount,paid_amount FROM expense_requests WHERE id=?',
+    [detail.expense_request_id],
+  );
+  const remainingCents = toCents(request?.amount) - toCents(request?.paid_amount);
+  if (amountCents > remainingCents) return res.status(409).json({ error: 'PAYMENT_EXCEEDS_REMAINING' });
+
+  const account = await one<any>(
+    'SELECT id,status,verified_at FROM bank_accounts WHERE id=? AND legal_entity_id=?',
+    [bankAccountId, detail.legal_entity_id],
+  );
+  if (!account) return res.status(403).json({ error: 'BANK_ACCOUNT_NOT_ALLOWED' });
+  if (account.status !== 'ACTIVE' || !account.verified_at) return res.status(400).json({ error: 'BANK_ACCOUNT_NOT_READY' });
+  const assignment = await one(
+    `SELECT 1 FROM unit_bank_account_assignments
+      WHERE unit_id=? AND bank_account_id=? AND status='ACTIVE' AND allow_disbursement=1
+        AND effective_start<=? AND (effective_end IS NULL OR effective_end>=?)`,
+    [detail.unit_id, bankAccountId, requestDate, requestDate],
+  );
+  if (!assignment) return res.status(400).json({ error: 'BANK_ACCOUNT_NOT_ASSIGNED_TO_UNIT' });
+
+  await query(
+    'UPDATE payment_requests SET bank_account_id=?,request_date=?,method=?,amount=?,notes=? WHERE id=?',
+    [bankAccountId, requestDate, method, fromCents(amountCents),
+      nullableText(req.body?.notes ?? detail.notes), detail.id],
+  );
+  await writeAudit({
+    legalEntityId: detail.legal_entity_id, unitId: detail.unit_id, userId: req.user!.id, ip: req.ip || null,
+    action: 'PAYMENT_REQUEST_UPDATE', entityType: 'PAYMENT_REQUEST', entityId: detail.id,
+    after: { amount: Number(fromCents(amountCents)), method, request_date: requestDate },
+  });
+  res.json(await paymentRequestDetail(detail.id));
+});
+
+paymentRequestRouter.delete('/payment-requests/:id', requirePermission('transaction.delete'), async (req, res) => {
+  const detail = await paymentRequestDetail(text(req.params.id));
+  if (!detail) return res.status(404).json({ error: 'PAYMENT_REQUEST_NOT_FOUND' });
+  if (!(await canAccessUnit(req.user!, detail.unit_id))) return res.status(403).json({ error: 'UNIT_FORBIDDEN' });
+  if (detail.status === 'POSTED') {
+    return res.status(409).json({ error: 'PAYMENT_REQUEST_POSTED' });
+  }
+  await query("DELETE FROM attachments WHERE entity_type='PAYMENT_REQUEST' AND entity_id=?", [detail.id]);
+  await query('DELETE FROM payment_requests WHERE id=?', [detail.id]);
+  await writeAudit({
+    legalEntityId: detail.legal_entity_id, unitId: detail.unit_id, userId: req.user!.id, ip: req.ip || null,
+    action: 'PAYMENT_REQUEST_DELETE', entityType: 'PAYMENT_REQUEST', entityId: detail.id,
+    before: { request_number: detail.request_number, amount: Number(detail.amount), status: detail.status },
+    reason: nullableText(req.body?.reason),
+  });
+  res.json({ ok: true, deleted: detail.id });
+});
+
 paymentRequestRouter.post('/payment-requests/:id/submit', requirePermission('payment_request.create'), async (req, res) => {
   const detail = await loadForAction(req, res, 'payment_request.create');
   if (!detail) return;

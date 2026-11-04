@@ -33,6 +33,8 @@ export type Permission =
   | 'expense.void'
   | 'payment_request.create'
   | 'payment_request.approve'
+  | 'attachment.upload'
+  | 'transaction.delete'
   | 'accounting.view'
   | 'journal.post'
   | 'period.close'
@@ -50,6 +52,7 @@ export const ROLE_LABEL: Record<UserRole, string> = {
   KEPALA_JENJANG: 'Kepala Jenjang',
   KEPALA_CABANG: 'Kepala Cabang',
   BENDAHARA_CABANG: 'Bendahara Cabang',
+  PURCHASING: 'Purchasing',
   AUDITOR: 'Auditor',
 };
 
@@ -69,6 +72,7 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
     'invoice.void', 'receivable.view', 'receipt.view', 'receipt.create', 'receipt.void', 'cashbank.view',
     'expense.view', 'expense.create', 'expense.manage', 'expense.approve', 'expense.pay', 'expense.void',
     'payment_request.create', 'payment_request.approve',
+    'attachment.upload', 'transaction.delete',
     'accounting.view', 'coa.manage',
   ],
   FINANCE_PUSAT: [
@@ -77,6 +81,7 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
     'receipt.view', 'receipt.create', 'receipt.void', 'cashbank.view',
     'expense.view', 'expense.create', 'expense.manage', 'expense.approve', 'expense.pay', 'expense.void',
     'payment_request.create',
+    'attachment.upload',
     'accounting.view',
   ],
   ACCOUNTING_PUSAT: [
@@ -94,6 +99,7 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
   KEPALA_CABANG: [
     'unit.view', 'report.view', 'approval.act', 'student.view', 'fee.view', 'billing.view', 'receivable.view',
     'receipt.view', 'cashbank.view', 'expense.view', 'expense.create', 'expense.approve',
+    'attachment.upload',
     'accounting.view',
   ],
   BENDAHARA_CABANG: [
@@ -101,7 +107,14 @@ const PERMISSIONS: Record<UserRole, Permission[]> = {
     'billing.view', 'billing.generate', 'receivable.view',
     'receipt.view', 'receipt.create', 'cashbank.view',
     'expense.view', 'expense.create', 'expense.pay',
+    'attachment.upload',
     'accounting.view',
+  ],
+  PURCHASING: [
+    'unit.view', 'report.view', 'student.view', 'fee.view', 'billing.view',
+    'receipt.view', 'cashbank.view',
+    'expense.view', 'expense.create',
+    'attachment.upload',
   ],
   AUDITOR: [
     'unit.view', 'bank.view', 'audit.view', 'report.view', 'student.view', 'fee.view', 'billing.view',
