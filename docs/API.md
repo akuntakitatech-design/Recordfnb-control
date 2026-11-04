@@ -233,7 +233,7 @@ rincian, MCM, dan lampiran. Ditolak bila sudah ada pembayaran (`409 EXPENSE_HAS_
 
 | Method | Endpoint | Permission |
 |---|---|---|
-| GET | `/api/v1/attachments?entityType=&entityId=` | `expense.view` (dicek scope unit) |
+| GET | `/api/v1/attachments?entityType=&entityId=` | login + scope unit |
 | POST | `/api/v1/attachments` | `attachment.upload` |
 | GET | `/api/v1/attachments/{id}/download` | login + scope unit |
 | DELETE | `/api/v1/attachments/{id}` | `transaction.delete` atau pengunggah |
