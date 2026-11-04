@@ -382,6 +382,33 @@ def main() -> int:
         removed = admin.delete(f"/api/v1/attachments/{listed[0]['id']}")
         check("hapus satu lampiran", removed.status_code == 200, removed.status_code)
 
+    oversize = staff.post("/api/v1/attachments", json={
+        "entityType": "EXPENSE_REQUEST", "entityId": editable_id,
+        "files": [{"name": "besar.bin", "mimeType": "application/octet-stream",
+                   "dataBase64": base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode()}],
+    })
+    check("file lebih dari 5 MB ditolak",
+          oversize.status_code == 400 and oversize.json().get("error") == "ATTACHMENT_FILE_TOO_LARGE",
+          oversize.text[:90])
+
+    too_many = staff.post("/api/v1/attachments", json={
+        "entityType": "EXPENSE_REQUEST", "entityId": editable_id,
+        "files": [{"name": f"f{i}.txt", "mimeType": "text/plain",
+                   "dataBase64": base64.b64encode(b"x").decode()} for i in range(11)],
+    })
+    check("lebih dari 10 file ditolak",
+          too_many.status_code == 400 and too_many.json().get("error") == "ATTACHMENT_TOO_MANY_FILES",
+          too_many.text[:90])
+
+    total_big = staff.post("/api/v1/attachments", json={
+        "entityType": "EXPENSE_REQUEST", "entityId": editable_id,
+        "files": [{"name": f"big{i}.bin", "mimeType": "application/octet-stream",
+                   "dataBase64": base64.b64encode(b"y" * (4 * 1024 * 1024 + 200 * 1024)).decode()} for i in range(5)],
+    })
+    check("total lampiran lebih dari 20 MB ditolak",
+          total_big.status_code == 400 and total_big.json().get("error") == "ATTACHMENT_TOTAL_TOO_LARGE",
+          total_big.text[:90])
+
     # --- 11. Hapus permanen hanya untuk role berwenang
     remaining_attachment = listed[1]["id"] if isinstance(listed, list) and len(listed) > 1 else None
     forbidden_delete = staff.delete(f"/api/v1/expenses/{editable_id}")

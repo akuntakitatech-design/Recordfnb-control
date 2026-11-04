@@ -72,7 +72,14 @@ export function Attachments({ entityType, entityId }: { entityType: string; enti
     setBusy(true);
     setError('');
     try {
-      const files = await filesToPayload(Array.from(selected));
+      const picked = Array.from(selected);
+      const totalBytes = picked.reduce((sum, file) => sum + file.size, 0);
+      if (totalBytes > 20 * 1024 * 1024) {
+        setError('Total lampiran sekali unggah maksimal 20 MB.');
+        if (inputRef.current) inputRef.current.value = '';
+        return;
+      }
+      const files = await filesToPayload(picked);
       await api('/api/v1/attachments', {
         method: 'POST',
         body: JSON.stringify({ entityType, entityId, files }),
@@ -104,7 +111,7 @@ export function Attachments({ entityType, entityId }: { entityType: string; enti
     <div style={{ marginTop: 16 }}>
       <div className="toolbar">
         <strong>Lampiran</strong>
-        <span className="cell-muted">bisa banyak file · maks 5 MB/file</span>
+        <span className="cell-muted">bisa banyak file · maks 5 MB/file, total 20 MB</span>
         <div className="spacer" />
         <label className={busy ? 'ghost-button' : 'ghost-button'} style={{ cursor: busy ? 'default' : 'pointer' }}>
           <Paperclip size={14} /> {busy ? 'Mengunggah…' : 'Unggah file'}

@@ -37,7 +37,7 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use('/api/v1/attachments', express.json({ limit: '60mb' }));
+app.use('/api/v1/attachments', express.json({ limit: '32mb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 

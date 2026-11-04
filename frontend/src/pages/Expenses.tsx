@@ -1067,15 +1067,22 @@ export function Expenses({ session }: { session: Session }) {
             </div>
 
             <div style={{ marginTop: 16 }}>
-              <FormSection title="5. Lampiran" hint="opsional · maks 10 file, 5 MB per file · diunggah otomatis setelah disimpan" />
+              <FormSection title="5. Lampiran" hint="opsional · maks 10 file, 5 MB per file, total 20 MB · diunggah otomatis setelah disimpan" />
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
                 <label className="ghost-button" style={{ cursor: 'pointer' }}>
                   <Paperclip size={14} /> Pilih file
                   <input type="file" multiple hidden data-testid="expense-file-input"
                     onChange={event => {
                       const picked = Array.from(event.target.files || []);
-                      if (picked.length > 0) setPendingFiles(current => [...current, ...picked].slice(0, 10));
                       event.target.value = '';
+                      if (picked.length === 0) return;
+                      const oversize = picked.find(file => file.size > 5 * 1024 * 1024);
+                      if (oversize) { setFormError(`${oversize.name} melebihi 5 MB.`); return; }
+                      const merged = [...pendingFiles, ...picked].slice(0, 10);
+                      const totalBytes = merged.reduce((sum, file) => sum + file.size, 0);
+                      if (totalBytes > 20 * 1024 * 1024) { setFormError('Total lampiran maksimal 20 MB.'); return; }
+                      setFormError('');
+                      setPendingFiles(merged);
                     }} />
                 </label>
                 <span className="cell-muted">

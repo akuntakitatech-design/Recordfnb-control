@@ -19,6 +19,7 @@ attachmentRouter.use(requireAuth);
 
 const MAX_FILES = 10;
 const MAX_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
 const ENTITY_TABLE: Record<string, { table: string; unitColumn: string | null }> = {
   EXPENSE_REQUEST: { table: 'expense_requests', unitColumn: 'unit_id' },
@@ -69,6 +70,7 @@ attachmentRouter.post('/attachments', requirePermission('attachment.upload'), as
   }
 
   const prepared: { name: string; mime: string; buffer: Buffer }[] = [];
+  let totalBytes = 0;
   for (const file of files) {
     const name = text(file?.name).slice(0, 200);
     const mime = (text(file?.mimeType) || 'application/octet-stream').slice(0, 120);
@@ -77,6 +79,8 @@ attachmentRouter.post('/attachments', requirePermission('attachment.upload'), as
     const buffer = Buffer.from(raw, 'base64');
     if (buffer.length === 0) return res.status(400).json({ error: 'ATTACHMENT_FILE_INVALID', file: name });
     if (buffer.length > MAX_BYTES) return res.status(400).json({ error: 'ATTACHMENT_FILE_TOO_LARGE', file: name });
+    totalBytes += buffer.length;
+    if (totalBytes > MAX_TOTAL_BYTES) return res.status(400).json({ error: 'ATTACHMENT_TOTAL_TOO_LARGE' });
     prepared.push({ name, mime, buffer });
   }
 

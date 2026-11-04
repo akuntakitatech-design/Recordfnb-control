@@ -246,9 +246,10 @@ Unggah memakai JSON base64 agar tidak butuh multipart:
   "files": [{ "name": "nota.pdf", "mimeType": "application/pdf", "dataBase64": "..." }] }
 ```
 
-Batas: **10 file per permintaan**, **5 MB per file** → `400 ATTACHMENT_TOO_MANY_FILES` /
-`400 ATTACHMENT_FILE_TOO_LARGE` / `400 ATTACHMENT_FILE_INVALID`. Body route ini memakai limit 60 MB.
-Isi file disimpan di kolom `MEDIUMBLOB` tabel `attachments` (rencana lanjut: object storage R2).
+Batas: **10 file per permintaan**, **5 MB per file**, **total 20 MB per permintaan** → `400 ATTACHMENT_TOO_MANY_FILES` /
+`400 ATTACHMENT_FILE_TOO_LARGE` / `400 ATTACHMENT_TOTAL_TOO_LARGE` / `400 ATTACHMENT_FILE_INVALID`. Body route ini
+memakai limit 32 MB dan Nginx (`client_max_body_size`) juga 32 MB. Isi file disimpan di kolom `MEDIUMBLOB`
+tabel `attachments` (rencana lanjut: object storage R2).
 
 ## 9. Akuntansi (ACC-01)
 
@@ -365,6 +366,7 @@ dan MCM. Role lain harus memakai pembatalan (VOID/CANCEL) agar jejak audit tetap
 | `ATTACHMENT_TARGET_INVALID` / `NOT_FOUND` | 400/404 | Entitas lampiran tidak dikenal / tidak ada |
 | `ATTACHMENT_FILES_REQUIRED` / `TOO_MANY_FILES` | 400 | Tidak ada file / lebih dari 10 file |
 | `ATTACHMENT_FILE_INVALID` / `FILE_TOO_LARGE` | 400 | Base64 rusak / file > 5 MB |
+| `ATTACHMENT_TOTAL_TOO_LARGE` | 400 | Total file sekali unggah > 20 MB |
 | `ACCOUNT_MAPPING_MISSING` | 400 | Akun tidak ada di CoA / tidak postable |
 | `JOURNAL_NOT_BALANCED` | 409 | Debit ≠ kredit |
 | `JOURNAL_NOT_REVERSIBLE` | 409 | Jurnal sudah dibalik / bukan ORIGINAL |
