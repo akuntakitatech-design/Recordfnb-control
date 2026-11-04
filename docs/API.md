@@ -65,6 +65,11 @@ Semua respons API mengirim `X-Content-Type-Options: nosniff`, `X-Frame-Options: 
 | GET | `/api/v1/organization/audit-logs` | `audit.view` |
 
 **Aturan penting**
+- `POST /units` menyederhanakan setup: `unitCode` opsional (otomatis `<kode jenjang>-<urut>`),
+  `operationalStatus` default `ACTIVE` (`DRAFT` hanya bila dikirim eksplisit), `officialSchoolId` /
+  `locationId` / `defaultAcademicYearId` dibuat otomatis bila kosong, `effectiveStart` default hari ini.
+  `unit_finance_settings` ikut dibuat dengan akun default `1-1200` (piutang) dan `1-1100` (kas) bila ada di CoA.
+- `POST /official-schools` — `verificationStatus` default `VERIFIED` (tidak lagi diminta di UI).
 - `PATCH /units/{id}` menolak perubahan `educationLevelId`/`officialSchoolId` bila unit sudah punya
   transaksi → `409 UNIT_IDENTITY_LOCKED` (VAL-08).
 - `readiness` mengembalikan checklist lengkap (`status` + `checks[]`), bukan hanya boolean.
@@ -73,6 +78,7 @@ Semua respons API mengirim `X-Content-Type-Options: nosniff`, `X-Frame-Options: 
 **Kelola master (jenjang, kelompok, sekolah resmi, lokasi, tahun ajaran)**
 - `PATCH .../{id}/status` body `{ status: "ACTIVE" | "INACTIVE" }` — menonaktifkan tanpa menghapus data.
   Dipakai untuk master yang sudah terlanjur dipakai unit/tarif/tagihan. Audit: `<MASTER>_STATUS`.
+  **UI tidak lagi menampilkan tombol aktif/nonaktif**; endpoint dipertahankan untuk kompatibilitas data lama.
 - `DELETE .../{id}` — hanya berhasil bila master **belum dipakai**. Jika masih dipakai, respons
   `409 MASTER_IN_USE` dengan rincian `references: [{ label, count }]` (mis. 31 unit, 1 kelompok sekolah).
   Audit: `<MASTER>_DELETE` berisi snapshot data sebelum dihapus.

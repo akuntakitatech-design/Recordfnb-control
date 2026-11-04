@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Pencil, Plus, Power, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { api, messageOf } from '../api';
 import { Modal } from '../components/Modal';
 import type { Hierarchy, Session } from '../types';
 
-type TabKey = 'entity' | 'levels' | 'groups' | 'schools' | 'locations' | 'years';
+type TabKey = 'entity' | 'levels' | 'schools' | 'locations' | 'years';
 
 type FieldDef = {
   key: string;
@@ -22,7 +22,6 @@ type Column = { key: string; label: string; render?: (row: any) => ReactNode };
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'entity', label: 'Badan Hukum' },
   { key: 'levels', label: 'Jenjang' },
-  { key: 'groups', label: 'Kelompok Sekolah' },
   { key: 'schools', label: 'Sekolah Resmi' },
   { key: 'locations', label: 'Lokasi' },
   { key: 'years', label: 'Tahun Ajaran' },
@@ -65,30 +64,11 @@ export function Organization({ session }: { session: Session }) {
             { key: 'code', label: 'Kode' },
             { key: 'name', label: 'Nama' },
             { key: 'sort_order', label: 'Urutan' },
-            { key: 'status', label: 'Status', render: (row: any) => <StatusBadge value={row.status} /> },
           ] as Column[],
           fields: [
             { key: 'code', label: 'Kode', required: true, placeholder: 'TK' },
             { key: 'name', label: 'Nama', required: true, placeholder: 'Taman Kanak-kanak' },
             { key: 'sortOrder', label: 'Urutan', type: 'number' },
-          ] as FieldDef[],
-        };
-      case 'groups':
-        return {
-          ...common,
-          title: 'Kelompok sekolah',
-          endpoint: '/api/v1/organization/school-groups',
-          rows: hierarchy.groups,
-          columns: [
-            { key: 'code', label: 'Kode' },
-            { key: 'name', label: 'Nama' },
-            { key: 'level_name', label: 'Jenjang' },
-            { key: 'status', label: 'Status', render: (row: any) => <StatusBadge value={row.status} /> },
-          ] as Column[],
-          fields: [
-            { key: 'code', label: 'Kode', required: true },
-            { key: 'name', label: 'Nama', required: true },
-            { key: 'educationLevelId', label: 'Jenjang', type: 'select', required: true, options: levelOptions, full: true },
           ] as FieldDef[],
         };
       case 'schools':
@@ -101,17 +81,11 @@ export function Organization({ session }: { session: Session }) {
             { key: 'name', label: 'Nama' },
             { key: 'npsn', label: 'NPSN', render: (row: any) => row.npsn || '—' },
             { key: 'level_name', label: 'Jenjang' },
-            { key: 'verification_status', label: 'Verifikasi', render: (row: any) => <StatusBadge value={row.verification_status} /> },
           ] as Column[],
           fields: [
             { key: 'name', label: 'Nama sekolah', required: true, full: true },
             { key: 'npsn', label: 'NPSN (8 karakter)', placeholder: 'Opsional' },
             { key: 'educationLevelId', label: 'Jenjang', type: 'select', required: true, options: levelOptions },
-            {
-              key: 'verificationStatus', label: 'Status verifikasi', type: 'select',
-              options: [{ value: 'UNVERIFIED', label: 'Belum terverifikasi' }, { value: 'VERIFIED', label: 'Terverifikasi' }],
-            },
-            { key: 'governmentReference', label: 'Referensi dokumen', full: true },
           ] as FieldDef[],
         };
       case 'locations':
@@ -318,25 +292,6 @@ function MasterTable({ config, onSaved }: { config: MasterConfig; onSaved: (mess
     }
   }
 
-  async function toggleStatus(row: any) {
-    const next = row.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-    setBusyId(row.id);
-    setRowError('');
-    try {
-      await api(`${config.endpoint}/${row.id}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: next }),
-      });
-      onSaved(next === 'ACTIVE'
-        ? `${labelOf(row)} diaktifkan kembali.`
-        : `${labelOf(row)} dinonaktifkan. Data tetap tersimpan dan bisa diaktifkan lagi.`);
-    } catch (statusError) {
-      setRowError(messageOf(statusError));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
   async function remove(row: any) {
     setBusyId(row.id);
     setRowError('');
@@ -383,15 +338,6 @@ function MasterTable({ config, onSaved }: { config: MasterConfig; onSaved: (mess
                     <div className="cell-actions">
                       <button type="button" className="link-button" onClick={() => open(row)}>
                         <Pencil size={14} /> Edit
-                      </button>
-                      <button
-                        type="button"
-                        className="link-button"
-                        onClick={() => void toggleStatus(row)}
-                        disabled={busyId === row.id}
-                        data-testid={`master-toggle-${row.id}`}
-                      >
-                        <Power size={14} /> {row.status === 'ACTIVE' ? 'Nonaktifkan' : 'Aktifkan'}
                       </button>
                       <button
                         type="button"
