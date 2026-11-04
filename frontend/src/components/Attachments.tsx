@@ -17,6 +17,34 @@ function sizeLabel(bytes: number) {
   return `${bytes} B`;
 }
 
+/** Ubah File menjadi payload JSON base64 yang diterima `POST /attachments`. */
+export function filesToPayload(files: File[]) {
+  return Promise.all(files.map(file => new Promise<Record<string, string>>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result);
+      resolve({
+        name: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        dataBase64: result.split(',')[1] || '',
+      });
+    };
+    reader.onerror = () => reject(new Error('Gagal membaca file'));
+    reader.readAsDataURL(file);
+  })));
+}
+
+/** Unggah beberapa file sekaligus ke satu entitas transaksi. */
+export async function uploadAttachmentFiles(entityType: string, entityId: string, files: File[]) {
+  if (files.length === 0) return 0;
+  const payload = await filesToPayload(files);
+  await api('/api/v1/attachments', {
+    method: 'POST',
+    body: JSON.stringify({ entityType, entityId, files: payload }),
+  });
+  return payload.length;
+}
+
 /**
  * Lampiran dokumen — dipakai di detail semua transaksi.
  * Mendukung banyak file sekaligus (maks 10 file, 5 MB per file).
@@ -44,19 +72,7 @@ export function Attachments({ entityType, entityId }: { entityType: string; enti
     setBusy(true);
     setError('');
     try {
-      const files = await Promise.all(Array.from(selected).map(file => new Promise<Record<string, string>>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = String(reader.result);
-          resolve({
-            name: file.name,
-            mimeType: file.type || 'application/octet-stream',
-            dataBase64: result.split(',')[1] || '',
-          });
-        };
-        reader.onerror = () => reject(new Error('Gagal membaca file'));
-        reader.readAsDataURL(file);
-      })));
+      const files = await filesToPayload(Array.from(selected));
       await api('/api/v1/attachments', {
         method: 'POST',
         body: JSON.stringify({ entityType, entityId, files }),

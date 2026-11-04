@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Check, Pencil, Plus, Send, Trash2, Wallet, X } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Paperclip, Pencil, Plus, Send, Trash2, Wallet, X } from 'lucide-react';
 import { api, messageOf } from '../api';
 import { Modal } from '../components/Modal';
-import { Attachments } from '../components/Attachments';
+import { Attachments, uploadAttachmentFiles } from '../components/Attachments';
 import { dateID, money, todayISO } from '../format';
 import { StatusBadge } from './Organization';
 import type {
@@ -15,6 +15,37 @@ type LineForm = { itemName: string; qty: string; uom: string; unitPrice: string 
 type Tab = 'requests' | 'approvals' | 'payments' | 'mcm' | 'master';
 
 const STATUS_OPTIONS = ['', 'DRAFT', 'SUBMITTED', 'APPROVED', 'PAID', 'REJECTED', 'CANCELLED'];
+
+const PRIORITY_OPTIONS = [
+  { value: 'NORMAL', label: 'Normal', hint: 'Tanpa percepatan' },
+  { value: 'TINGGI', label: 'Tinggi', hint: 'Didahulukan' },
+  { value: 'MENDESAK', label: 'Mendesak', hint: 'Segera diproses' },
+];
+
+const DUE_PRESETS = [
+  { label: '1 jam', minutes: 60 },
+  { label: '3 jam', minutes: 180 },
+  { label: '24 jam', minutes: 1440 },
+  { label: '3 hari', minutes: 4320 },
+];
+
+/** Format Date -> nilai untuk <input type="datetime-local"> (waktu lokal). */
+function toLocalInput(when: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`;
+}
+
+function FormSection({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div style={{
+      gridColumn: '1 / -1', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+      marginTop: 6, paddingBottom: 6, borderBottom: '1px solid var(--line)',
+    }}>
+      <strong style={{ fontSize: 13 }}>{title}</strong>
+      {hint && <span className="form-hint">{hint}</span>}
+    </div>
+  );
+}
 
 export function Expenses({ session }: { session: Session }) {
   const can = (permission: Permission) => session.permissions.includes(permission);
@@ -43,6 +74,8 @@ export function Expenses({ session }: { session: Session }) {
   });
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const submitIntent = useRef<'DRAFT' | 'SUBMITTED'>('DRAFT');
 
   const [detail, setDetail] = useState<ExpenseDetail | null>(null);
   const [detailError, setDetailError] = useState('');
@@ -164,8 +197,17 @@ export function Expenses({ session }: { session: Session }) {
     }
   }
 
+  function closeForm() {
+    setCreating(false);
+    setEditingId(null);
+    setPendingFiles([]);
+    submitIntent.current = 'DRAFT';
+  }
+
   function openCreate() {
     setEditingId(null);
+    setPendingFiles([]);
+    submitIntent.current = 'DRAFT';
     setForm(current => ({
       ...current, expenseCategoryId: '', vendorId: '', description: '', amount: '', notes: '',
       dueDate: '', payeeName: '', shippingCost: '', lines: [],
@@ -178,6 +220,8 @@ export function Expenses({ session }: { session: Session }) {
   async function openEdit(row: ExpenseRow) {
     try {
       const detail = await api<ExpenseDetail>(`/api/v1/expenses/${row.id}`);
+      setPendingFiles([]);
+      submitIntent.current = 'DRAFT';
       setForm({
         unitId: detail.unit_id,
         expenseCategoryId: detail.expense_category_id,
@@ -264,6 +308,7 @@ export function Expenses({ session }: { session: Session }) {
     event.preventDefault();
     setSaving(true);
     setFormError('');
+    const submitNow = submitIntent.current === 'SUBMITTED';
     try {
       const path = editingId ? `/api/v1/expenses/${editingId}` : '/api/v1/expenses';
       const result = await api<ExpenseDetail>(path, {
@@ -280,6 +325,7 @@ export function Expenses({ session }: { session: Session }) {
           shippingCost: Number(form.shippingCost || 0),
           priority: form.priority,
           paymentDueAt: form.paymentDueAt ? form.paymentDueAt.replace('T', ' ') : null,
+          submit: !editingId && submitNow,
           lines: form.lines.map(line => ({
             itemName: line.itemName, qty: Number(line.qty || 0), uom: line.uom || null,
             unitPrice: Number(line.unitPrice || 0),
@@ -287,11 +333,20 @@ export function Expenses({ session }: { session: Session }) {
           notes: form.notes || null,
         }),
       });
+      let uploadNote = '';
+      if (pendingFiles.length > 0) {
+        const uploaded = await uploadAttachmentFiles('EXPENSE_REQUEST', result.id, pendingFiles);
+        uploadNote = ` ${uploaded} lampiran diunggah.`;
+      }
+      if (editingId && submitNow) {
+        await api(`/api/v1/expenses/${editingId}/submit`, { method: 'POST', body: JSON.stringify({}) });
+      }
       setNotice(editingId
-        ? `Pengajuan ${result.request_number} diperbarui.`
-        : `Pengajuan ${result.request_number} tersimpan sebagai draft.`);
-      setEditingId(null);
-      setCreating(false);
+        ? `Pengajuan ${result.request_number} diperbarui${submitNow ? ' dan diajukan' : ''}.${uploadNote}`
+        : submitNow
+          ? `Pengajuan ${result.request_number} diajukan untuk persetujuan.${uploadNote}`
+          : `Pengajuan ${result.request_number} tersimpan sebagai draft.${uploadNote}`);
+      closeForm();
       await refresh();
     } catch (submitError) {
       setFormError(messageOf(submitError));
@@ -814,15 +869,17 @@ export function Expenses({ session }: { session: Session }) {
       )}
 
       {creating && (
-        <Modal title={editingId ? 'Edit Pengajuan Pembelian' : 'Ajukan Pengeluaran'} onClose={() => { setCreating(false); setEditingId(null); }} maxWidth={820}>
+        <Modal title={editingId ? 'Edit Pengajuan Pembelian' : 'Ajukan Pengeluaran'} onClose={closeForm} maxWidth={960}>
           <form onSubmit={submitCreate}>
             <div className="form-grid">
+              <FormSection title="1. Unit & jenis biaya" hint="dasar pencatatan beban dan rekening yang dipakai" />
               <label className="field">Unit penanggung beban
-                <select className="select" value={form.unitId}
+                <select className="select" value={form.unitId} disabled={Boolean(editingId)}
                   onChange={event => setForm({ ...form, unitId: event.target.value })} required>
                   <option value="">Pilih…</option>
                   {units.map(unit => <option key={unit.id} value={unit.id}>{unit.unit_name}</option>)}
                 </select>
+                {editingId && <span className="form-hint">Unit tidak bisa diubah saat edit.</span>}
               </label>
               <label className="field">Jenis biaya
                 <select className="select" value={form.expenseCategoryId}
@@ -833,36 +890,6 @@ export function Expenses({ session }: { session: Session }) {
                   ))}
                 </select>
               </label>
-              <label className="field">Tanggal pengajuan
-                <input type="date" className="input" value={form.requestDate}
-                  onChange={event => setForm({ ...form, requestDate: event.target.value })} required />
-              </label>
-              <label className="field">Jatuh tempo (opsional)
-                <input type="date" className="input" value={form.dueDate}
-                  onChange={event => setForm({ ...form, dueDate: event.target.value })} />
-              </label>
-              <label className="field">Prioritas
-                <select className="select" value={form.priority}
-                  onChange={event => setForm({ ...form, priority: event.target.value })} data-testid="expense-priority">
-                  <option value="NORMAL">Normal</option>
-                  <option value="TINGGI">Tinggi</option>
-                  <option value="MENDESAK">Mendesak</option>
-                </select>
-              </label>
-              <label className="field">Batas waktu pembayaran (opsional)
-                <input type="datetime-local" className="input" value={form.paymentDueAt}
-                  onChange={event => setForm({ ...form, paymentDueAt: event.target.value })} data-testid="expense-payment-due" />
-              </label>
-              <label className="field">Biaya pengiriman (Rp)
-                <input className="input" inputMode="numeric" value={form.shippingCost}
-                  onChange={event => setForm({ ...form, shippingCost: event.target.value })} placeholder="0" data-testid="expense-shipping" />
-              </label>
-              {form.lines.length === 0 && (
-                <label className="field">Nominal (Rp)
-                  <input className="input" inputMode="numeric" value={form.amount}
-                    onChange={event => setForm({ ...form, amount: event.target.value })} required data-testid="expense-amount" />
-                </label>
-              )}
               <label className="field">Vendor (opsional)
                 <select className="select" value={form.vendorId}
                   onChange={event => setForm({ ...form, vendorId: event.target.value })}>
@@ -876,75 +903,212 @@ export function Expenses({ session }: { session: Session }) {
                 <input className="input" value={form.payeeName}
                   onChange={event => setForm({ ...form, payeeName: event.target.value })} placeholder="Nama penerima pembayaran" />
               </label>
-              <label className="field">Catatan (opsional)
+
+              <FormSection title="2. Waktu & prioritas" hint="menentukan urutan approval dan tenggat pembayaran" />
+              <label className="field">Tanggal pengajuan
+                <input type="date" className="input" value={form.requestDate}
+                  onChange={event => setForm({ ...form, requestDate: event.target.value })} required />
+              </label>
+              <label className="field">Jatuh tempo (opsional)
+                <input type="date" className="input" value={form.dueDate}
+                  onChange={event => setForm({ ...form, dueDate: event.target.value })} />
+              </label>
+              <div className="field">
+                <label htmlFor="expense-priority-field">Prioritas</label>
+                <select id="expense-priority-field" className="select" value={form.priority}
+                  onChange={event => setForm({ ...form, priority: event.target.value })} data-testid="expense-priority">
+                  {PRIORITY_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label} — {option.hint}</option>
+                  ))}
+                </select>
+                {form.priority === 'MENDESAK' && (
+                  <span className="form-hint" style={{ color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <AlertTriangle size={13} /> Pengajuan akan ditandai mendesak untuk penyetuju.
+                  </span>
+                )}
+              </div>
+              <div className="field">
+                <label htmlFor="expense-payment-due-field">Batas waktu pembayaran (opsional)</label>
+                <input id="expense-payment-due-field" type="datetime-local" className="input" value={form.paymentDueAt}
+                  onChange={event => setForm({ ...form, paymentDueAt: event.target.value })} data-testid="expense-payment-due" />
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                  {DUE_PRESETS.map(preset => (
+                    <button key={preset.label} type="button" className="ghost-button"
+                      style={{ padding: '2px 9px', fontSize: 12, fontWeight: 600 }}
+                      onClick={() => setForm({ ...form, paymentDueAt: toLocalInput(new Date(Date.now() + preset.minutes * 60000)) })}>
+                      {preset.label}
+                    </button>
+                  ))}
+                  {form.paymentDueAt && (
+                    <button type="button" className="link-button danger" onClick={() => setForm({ ...form, paymentDueAt: '' })}>
+                      Hapus batas
+                    </button>
+                  )}
+                </div>
+                <span className="form-hint" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Clock size={13} /> Dipakai sebagai hitung mundur di daftar pengajuan sampai dibayar.
+                </span>
+              </div>
+
+              <FormSection title="3. Rincian & nilai" hint="isi rincian barang agar total dihitung server" />
+              <label className="field">Biaya pengiriman (Rp)
+                <input className="input" inputMode="numeric" value={form.shippingCost}
+                  onChange={event => setForm({ ...form, shippingCost: event.target.value })} placeholder="0" data-testid="expense-shipping" />
+              </label>
+              <label className="field">Nominal (Rp)
+                <input className="input" inputMode="numeric"
+                  value={form.lines.length > 0 ? String(grandTotal) : form.amount}
+                  disabled={form.lines.length > 0}
+                  onChange={event => setForm({ ...form, amount: event.target.value })}
+                  required={form.lines.length === 0} data-testid="expense-amount" />
+                <span className="form-hint">
+                  {form.lines.length > 0 ? 'Dihitung otomatis dari rincian + ongkir.' : 'Isi manual bila tidak memakai rincian barang.'}
+                </span>
+              </label>
+
+              <FormSection title="4. Uraian & catatan" hint="muncul di daftar, detail, dan dokumen cetak" />
+              <label className="field" style={{ gridColumn: '1 / -1' }}>Uraian
+                <input className="input" value={form.description}
+                  onChange={event => setForm({ ...form, description: event.target.value })}
+                  placeholder="Contoh: Honor guru bantu bulan Juli" required data-testid="expense-description" />
+              </label>
+              <label className="field" style={{ gridColumn: '1 / -1' }}>Catatan (opsional)
                 <input className="input" value={form.notes}
-                  onChange={event => setForm({ ...form, notes: event.target.value })} />
+                  onChange={event => setForm({ ...form, notes: event.target.value })}
+                  placeholder="Keterangan tambahan untuk penyetuju" />
               </label>
             </div>
-            <div style={{ marginTop: 12 }}>
-              <div className="toolbar">
+
+            <div style={{ marginTop: 16 }}>
+              <div className="toolbar" style={{ padding: '0 0 10px', borderBottom: '1px solid var(--line)' }}>
                 <strong>Rincian barang</strong>
                 <span className="cell-muted">opsional · ketik nama barang sendiri</span>
                 <div className="spacer" />
+                {form.lines.length > 0 && <span className="cell-muted">{form.lines.length} baris</span>}
                 <button type="button" className="ghost-button" data-testid="expense-line-add"
                   onClick={() => setForm({ ...form, lines: [...form.lines, { itemName: '', qty: '1', uom: '', unitPrice: '' }] })}>
                   <Plus size={14} /> Tambah baris
                 </button>
               </div>
-              {form.lines.length > 0 && (
+              {form.lines.length > 0 ? (
                 <div className="table-wrap">
                   <table>
+                    <colgroup>
+                      <col />
+                      <col style={{ width: 74 }} />
+                      <col style={{ width: 86 }} />
+                      <col style={{ width: 130 }} />
+                      <col style={{ width: 104 }} />
+                      <col style={{ width: 62 }} />
+                    </colgroup>
                     <thead>
                       <tr>
-                        <th>Nama barang</th><th>Qty</th><th>Satuan</th><th>Harga satuan</th>
-                        <th style={{ textAlign: 'right' }}>Subtotal</th><th />
+                        <th style={{ padding: '8px 6px' }}>Nama barang</th>
+                        <th style={{ padding: '8px 6px' }}>Qty</th>
+                        <th style={{ padding: '8px 6px' }}>Satuan</th>
+                        <th style={{ padding: '8px 6px' }}>Harga satuan</th>
+                        <th style={{ padding: '8px 6px', textAlign: 'right' }}>Subtotal</th>
+                        <th style={{ padding: '8px 6px' }} />
                       </tr>
                     </thead>
                     <tbody>
                       {form.lines.map((line, index) => (
                         <tr key={index}>
-                          <td>
-                            <input className="input" value={line.itemName} data-testid={`expense-line-name-${index}`}
+                          <td style={{ padding: '6px' }}>
+                            <input className="input" style={{ width: '100%', padding: '7px 8px' }} value={line.itemName}
+                              data-testid={`expense-line-name-${index}`}
                               onChange={event => updateLine(index, { itemName: event.target.value })}
                               placeholder="Kertas A4 80gsm" />
                           </td>
-                          <td style={{ width: 90 }}>
-                            <input className="input" inputMode="decimal" value={line.qty}
+                          <td style={{ padding: '6px' }}>
+                            <input className="input" style={{ width: '100%', padding: '7px 8px' }} inputMode="decimal" value={line.qty}
                               onChange={event => updateLine(index, { qty: event.target.value })} />
                           </td>
-                          <td style={{ width: 100 }}>
-                            <input className="input" value={line.uom}
+                          <td style={{ padding: '6px' }}>
+                            <input className="input" style={{ width: '100%', padding: '7px 8px' }} value={line.uom}
                               onChange={event => updateLine(index, { uom: event.target.value })} placeholder="rim" />
                           </td>
-                          <td style={{ width: 150 }}>
-                            <input className="input" inputMode="numeric" value={line.unitPrice}
+                          <td style={{ padding: '6px' }}>
+                            <input className="input" style={{ width: '100%', padding: '7px 8px', textAlign: 'right' }} inputMode="numeric"
+                              value={line.unitPrice}
                               onChange={event => updateLine(index, { unitPrice: event.target.value })} placeholder="55000" />
                           </td>
-                          <td style={{ textAlign: 'right' }} className="cell-muted">{money(lineTotal(line))}</td>
-                          <td>
-                            <button type="button" className="link-button danger" onClick={() => removeLine(index)}>Hapus</button>
+                          <td style={{ padding: '6px', textAlign: 'right', whiteSpace: 'nowrap' }} className="cell-muted">
+                            {money(lineTotal(line))}
+                          </td>
+                          <td style={{ padding: '6px', textAlign: 'right' }}>
+                            <button type="button" className="link-button danger" title="Hapus baris"
+                              onClick={() => removeLine(index)}>
+                              <Trash2 size={14} />
+                            </button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
+              ) : (
+                <div className="cell-muted" style={{ padding: '14px 0' }}>Belum ada rincian barang.</div>
               )}
-              <div className="cell-muted" style={{ marginTop: 8 }}>
-                Total pengajuan: <strong>{money(grandTotal)}</strong>
-                {form.lines.length > 0 && ` (rincian ${money(linesTotal)} + pengiriman ${money(Number(form.shippingCost || 0))})`}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginTop: 12 }}>
+                <div style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px' }}>
+                  <div className="cell-muted">Subtotal rincian</div>
+                  <strong>{money(linesTotal)}</strong>
+                </div>
+                <div style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px' }}>
+                  <div className="cell-muted">Ongkos kirim</div>
+                  <strong>{money(Number(form.shippingCost || 0))}</strong>
+                </div>
+                <div style={{ background: 'var(--brand-soft)', border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px' }}>
+                  <div className="cell-muted">Total pengajuan</div>
+                  <strong style={{ fontSize: 16 }}>{money(grandTotal)}</strong>
+                </div>
               </div>
             </div>
-            <label className="field" style={{ marginTop: 12 }}>Uraian
-              <input className="input" value={form.description}
-                onChange={event => setForm({ ...form, description: event.target.value })}
-                placeholder="Contoh: Honor guru bantu bulan Juli" required data-testid="expense-description" />
-            </label>
+
+            <div style={{ marginTop: 16 }}>
+              <FormSection title="5. Lampiran" hint="opsional · maks 10 file, 5 MB per file · diunggah otomatis setelah disimpan" />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+                <label className="ghost-button" style={{ cursor: 'pointer' }}>
+                  <Paperclip size={14} /> Pilih file
+                  <input type="file" multiple hidden data-testid="expense-file-input"
+                    onChange={event => {
+                      const picked = Array.from(event.target.files || []);
+                      if (picked.length > 0) setPendingFiles(current => [...current, ...picked].slice(0, 10));
+                      event.target.value = '';
+                    }} />
+                </label>
+                <span className="cell-muted">
+                  {pendingFiles.length === 0 ? 'Belum ada file dipilih.' : `${pendingFiles.length} file siap diunggah.`}
+                </span>
+              </div>
+              {pendingFiles.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                  {pendingFiles.map((file, index) => (
+                    <div key={`${file.name}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                      <Paperclip size={14} />
+                      <span>{file.name}</span>
+                      <span className="cell-muted">{(file.size / 1024).toFixed(0)} KB</span>
+                      <button type="button" className="link-button danger"
+                        onClick={() => setPendingFiles(current => current.filter((_, i) => i !== index))}>
+                        Hapus
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {formError && <div className="form-error" style={{ marginTop: 12 }}>{formError}</div>}
             <div className="modal-actions">
-              <button type="button" className="ghost-button" onClick={() => setCreating(false)}>Batal</button>
-              <button type="submit" className="primary-button" disabled={saving} data-testid="expense-save">
-                {saving ? 'Menyimpan…' : 'Simpan Draft'}
+              <button type="button" className="ghost-button" onClick={closeForm} disabled={saving}>Batal</button>
+              <button type="submit" className="ghost-button" disabled={saving} data-testid="expense-save"
+                onClick={() => { submitIntent.current = 'DRAFT'; }}>
+                {saving && submitIntent.current === 'DRAFT' ? 'Menyimpan…' : 'Simpan Draft'}
+              </button>
+              <button type="submit" className="primary-button" disabled={saving} data-testid="expense-save-submit"
+                onClick={() => { submitIntent.current = 'SUBMITTED'; }}>
+                {saving && submitIntent.current === 'SUBMITTED' ? 'Mengajukan…' : 'Simpan & Ajukan'}
               </button>
             </div>
           </form>
