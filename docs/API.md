@@ -173,6 +173,24 @@ menampilkan rekening yang berizin untuk unit terpilih. Daftar rekening dibatasi 
 | GET | `/api/v1/expense-payments` | `expense.view` |
 | POST | `/api/v1/expenses/{id}/payments` | `expense.pay` |
 | POST | `/api/v1/expense-payments/{id}/void` | `expense.void` |
+| GET/POST | `/api/v1/payment-requests` | `expense.view` / `payment_request.create` |
+| GET | `/api/v1/payment-requests/{id}` | `expense.view` |
+| POST | `/api/v1/payment-requests/{id}/submit`, `/cancel` | `payment_request.create` |
+| POST | `/api/v1/payment-requests/{id}/approve`, `/reject` | `payment_request.approve` |
+| POST | `/api/v1/payment-requests/{id}/post` | `expense.pay` |
+
+**Alur status pengajuan pembelian**: `DRAFT → SUBMITTED → APPROVED → PAID` (dengan cabang `REJECTED`, `CANCELLED`).
+
+**Rincian barang & ongkos kirim**: `POST /expenses` menerima `lines: [{ itemName, qty, uom, unitPrice }]`
+(nama barang diketik manual) dan `shippingCost`. Bila `lines` diisi, total dihitung server:
+`Σ(qty × unitPrice) + shippingCost`; nilai `amount` dari klien diabaikan. Tanpa `lines`, `amount` dipakai
+seperti sebelumnya (kompatibel).
+
+**MCM (pengajuan pembayaran)**: `DRAFT → SUBMITTED → APPROVED → POSTED` (cabang `REJECTED`, `CANCELLED`).
+Dibuat Finance (`payment_request.create`), disetujui Ketua Yayasan (`payment_request.approve`, maker-checker:
+pembuat tidak boleh menyetujui sendiri), lalu diposting Finance (`expense.pay`) → membuat pembayaran,
+mutasi kas keluar, jurnal Dr beban / Cr kas, dan menaikkan `paid_amount` pengajuan. Nominal MCM ≤ sisa
+pengajuan; satu pengajuan boleh punya beberapa MCM (DP lalu pelunasan). Idempotency key `MCM:<id>`.
 
 **Alur status**: `DRAFT → SUBMITTED → APPROVED → PAID` (dengan cabang `REJECTED`, `CANCELLED`).
 

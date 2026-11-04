@@ -35,6 +35,7 @@ export type Permission =
   | 'cashbank.view'
   | 'expense.view' | 'expense.create' | 'expense.manage'
   | 'expense.approve' | 'expense.pay' | 'expense.void'
+  | 'payment_request.create' | 'payment_request.approve'
   | 'accounting.view' | 'journal.post' | 'period.close' | 'coa.manage'
   | 'receivable.view';
 
@@ -523,14 +524,58 @@ export type ExpensePayment = {
   unit_name?: string;
 };
 
+export type ExpenseLine = {
+  id: string;
+  line_no: number;
+  item_name: string;
+  qty: string;
+  uom: string | null;
+  unit_price: string;
+  amount: string;
+  notes: string | null;
+};
+
+export type PaymentRequestStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'POSTED' | 'CANCELLED';
+
+export type PaymentRequestRow = {
+  id: string;
+  request_number: string;
+  request_date: string;
+  method: 'CASH' | 'TRANSFER' | 'QRIS' | 'OTHER';
+  amount: string;
+  status: PaymentRequestStatus;
+  notes: string | null;
+  expense_request_id: string;
+  expense_request_number: string;
+  expense_description: string;
+  expense_amount: string;
+  expense_paid: string;
+  expense_remaining: string;
+  unit_id: string;
+  unit_code: string;
+  unit_name: string;
+  bank_account_id: string;
+  bank_name: string;
+  account_number: string;
+  created_by: string | null;
+  created_by_name: string | null;
+  approved_by_name: string | null;
+  rejected_by_name: string | null;
+  rejection_reason: string | null;
+  payment_id: string | null;
+};
+
 export type ExpenseDetail = ExpenseRow & {
   expense_category_id: string;
   vendor_id: string | null;
   notes: string | null;
+  shipping_cost?: string;
   rejection_reason: string | null;
   approved_by_name: string | null;
   rejected_by_name: string | null;
   expense_account_code: string | null;
+  lines?: ExpenseLine[];
+  paymentRequests?: PaymentRequestRow[];
   payments: ExpensePayment[];
 };
 

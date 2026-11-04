@@ -18,6 +18,7 @@ import { receivableRouter } from './routes/receivableRoutes.js';
 import { receiptRouter } from './routes/receiptRoutes.js';
 import { cashBankRouter } from './routes/cashBankRoutes.js';
 import { expenseRouter } from './routes/expenseRoutes.js';
+import { paymentRequestRouter } from './routes/paymentRequestRoutes.js';
 import { accountingRouter } from './routes/accountingRoutes.js';
 import { reportRouter } from './routes/reportRoutes.js';
 
@@ -56,6 +57,7 @@ app.use('/api/v1', receivableRouter);
 app.use('/api/v1', receiptRouter);
 app.use('/api/v1', cashBankRouter);
 app.use('/api/v1', expenseRouter);
+app.use('/api/v1', paymentRequestRouter);
 app.use('/api/v1', accountingRouter);
 app.use('/api/v1', reportRouter);
 
