@@ -23,15 +23,16 @@ pengakuan pendapatan `DEFERRED`.
 | Tagihan & piutang | Generate tagihan per unit + periode (idempoten), rincian per jenis biaya, angsuran, daftar tagihan, pembatalan (VOID), piutang + aging |
 | Penerimaan | Kwitansi bernomor per tanggal + unit, metode bayar, rekening penerimaan sesuai mapping unit, alokasi ke satu/beberapa tagihan, sisa sebagai uang belum dialokasikan, pembatalan (VOID) yang memulihkan tagihan, idempotency key |
 | Kas & bank | Saldo per rekening dari mutasi (masuk/keluar), daftar mutasi dengan filter rekening & tanggal, total masuk/keluar, pembatasan rekening per scope unit |
-| Pengeluaran | Jenis biaya (wajib akun beban), vendor, **pengajuan pembelian dengan rincian barang** (nama diketik manual, qty, satuan, harga satuan) + **biaya pengiriman**, alur Draft → Diajukan → Disetujui/Ditolak → Dibayar, pembayaran sebagian/penuh dari rekening berizin bayar, pembatalan pembayaran (VOID) dengan mutasi balik, idempotency key, maker-checker |
-| MCM (pengajuan pembayaran) | Finance membuat MCM (rekening + nominal, boleh DP), disetujui **Ketua Yayasan** (maker-checker), lalu **diposting** → kas keluar + jurnal otomatis; satu pengajuan bisa punya beberapa MCM hingga lunas |
+| Pengeluaran | Jenis biaya (wajib akun beban), vendor, **pengajuan pembelian dengan rincian barang** (nama diketik manual, qty, satuan, harga satuan) + **biaya pengiriman**, **prioritas** (Normal/Tinggi/Mendesak) dan **batas waktu pembayaran** (countdown seperti checkout marketplace), alur Draft → Diajukan → Disetujui/Ditolak → Dibayar, pembayaran sebagian/penuh dari rekening berizin bayar, pembatalan pembayaran (VOID) dengan mutasi balik, idempotency key, maker-checker, **edit** selama Draft/Ditolak dan **hapus permanen** khusus `ADMIN_YAYASAN`. Form pengajuan terdiri dari 5 bagian (unit & jenis biaya, waktu & prioritas, rincian & nilai, uraian & catatan, lampiran) dengan total dihitung otomatis, preset batas waktu, serta tombol **Simpan Draft** dan **Simpan & Ajukan** |
+| MCM (pengajuan pembayaran) | Finance membuat MCM (rekening + nominal, boleh DP), disetujui **Ketua Yayasan** (maker-checker), lalu **diposting** → kas keluar + jurnal otomatis; satu pengajuan bisa punya beberapa MCM hingga lunas; MCM Draft/Ditolak bisa diedit, dan **hapus permanen** khusus `ADMIN_YAYASAN` (ditolak `409` bila sudah `POSTED`) |
+| Lampiran dokumen | Unggah **banyak file sekaligus** (maks 10 file, 5 MB/file) untuk pengajuan, MCM, tagihan, penerimaan, pembayaran, dan jurnal; disimpan di tabel `attachments`, bisa diunduh dan dihapus |
 | Akuntansi | Bagan akun (CoA) dengan tipe & saldo normal, jurnal otomatis dari tagihan/penerimaan/pengeluaran, jurnal manual, jurnal pembalik (reversal), neraca saldo, buku besar, rekonsiliasi subledger vs GL, periode fiskal bulanan + tutup/buka kembali (ACC-01/02/03) |
 | Laporan | Ringkasan cabang & jenjang (tagihan, penerimaan, pengeluaran, surplus, piutang, siswa), aging, status closing, posisi keuangan, aktivitas pendapatan–beban, arus kas per sumber, dan **drill-down** ke dokumen sumber — semua dibatasi scope unit pengguna |
 | Hardening | Rate limit login (5 gagal / 15 menit), header keamanan, detail error tidak dibocorkan di production, proteksi VAL-08 untuk identitas unit, dokumentasi API & traceability UAT, skrip verifikasi satu perintah |
 
-**Belum termasuk (fase berikut):** pengakuan pendapatan `DEFERRED`, lampiran/bukti dokumen,
+**Belum termasuk (fase berikut):** pengakuan pendapatan `DEFERRED`,
 alokasi biaya bersama antarunit, anggaran & unit cost, integrasi & rekonsiliasi bank otomatis,
-transfer antarunit sebagai perpindahan kas, ekspor Excel/PDF.
+transfer antarunit sebagai perpindahan kas, ekspor Excel/PDF, penyimpanan lampiran di object storage (R2).
 
 ## 2. Tech stack
 
@@ -55,9 +56,12 @@ backend/
   db/migrations/005_disbursements.sql     # kategori biaya, vendor, pengajuan, pembayaran
   db/migrations/006_accounting.sql        # CoA, periode fiskal, jurnal + seed 9 akun
   db/migrations/007_password_policy.sql   # penanda wajib ganti password + waktu ganti password
+  db/migrations/008_purchase_and_payment_request.sql  # rincian barang, ongkir, MCM
+  db/migrations/009_attachments.sql       # lampiran dokumen generik (multi-file, BLOB)
+  db/migrations/010_expense_priority_deadline.sql  # prioritas + batas waktu pembayaran
   src/index.ts                            # migrasi -> bootstrap admin -> listen
   src/db.ts · src/http.ts                 # pool & helper validasi
-  src/auth.ts · src/permissions.ts        # sesi, 8 role, permission, unit scope
+  src/auth.ts · src/permissions.ts        # sesi, 9 role, permission, unit scope
   src/audit.ts                            # audit trail terstruktur
   src/rateLimit.ts                        # rate limit percobaan login (in-memory)
   src/accounting.ts                       # mesin jurnal: periode, posting, reversal, mapping
@@ -72,6 +76,8 @@ backend/
   src/routes/receiptRoutes.ts             # penerimaan, alokasi, pembatalan
   src/routes/cashBankRoutes.ts            # saldo & mutasi kas/bank
   src/routes/expenseRoutes.ts             # kategori, vendor, pengajuan, pembayaran, void
+  src/routes/paymentRequestRoutes.ts      # MCM: pengajuan pembayaran, approval, posting
+  src/routes/attachmentRoutes.ts          # lampiran multi-file semua transaksi
   src/routes/accountingRoutes.ts          # CoA, periode, jurnal, neraca saldo, rekonsiliasi, backfill
   src/routes/reportRoutes.ts              # ringkasan, posisi, aktivitas, arus kas, drill-down
   src/routes/dashboardRoutes.ts
@@ -83,11 +89,13 @@ frontend/
   src/pages/BankAccounts.tsx · Readiness.tsx · Users.tsx · Audit.tsx
   src/pages/Students.tsx · Fees.tsx · Billing.tsx · Receivables.tsx
   src/pages/Receipts.tsx · CashBank.tsx · Expenses.tsx · Accounting.tsx · Reports.tsx
+  src/components/Attachments.tsx          # panel unggah/unduh/hapus lampiran
 tests/foundation_uat.py                   # UAT T01–T10, T19 (blueprint) + T21 reset password
 tests/organization_master_uat.py          # UAT T22 kelola master (edit, nonaktif, hapus)
 tests/billing_uat.py                      # UAT BILL-01 (tagihan & piutang)
 tests/receipt_uat.py                      # UAT FC-01 (penerimaan & kas/bank)
 tests/expense_uat.py                      # UAT FC-01 (pengeluaran & maker-checker)
+tests/payment_request_uat.py              # UAT T24 (rincian barang, ongkir, MCM, lampiran, edit/hapus)
 tests/accounting_uat.py                   # UAT ACC-01 (jurnal, rekonsiliasi, tutup buku)
 tests/report_uat.py                        # UAT RPT-01 (agregasi & drill-down)
 docs/API.md                               # kontrak API, permission matrix, kode error
@@ -139,6 +147,7 @@ lain lewat tombol **Reset password** di menu Pengguna (`POST /api/v1/users/{id}/
 | Kepala Jenjang | Monitoring jenjang yang ditetapkan |
 | Kepala Cabang | Monitoring/approval unit sendiri |
 | Bendahara Cabang | Input pada unit sendiri |
+| Purchasing | Input pengajuan pembelian pada unit yang ditetapkan (tanpa approval/pembayaran) |
 | Auditor | Read-only + audit trail |
 
 Role pusat (`PIMPINAN`, `ADMIN_YAYASAN`, `FINANCE_PUSAT`, `ACCOUNTING_PUSAT`, `AUDITOR`) melihat
@@ -184,13 +193,15 @@ Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **
 | GET | `/api/v1/cash-bank/mutations` | Mutasi kas & bank + total masuk/keluar terfilter |
 | GET/POST/PATCH | `/api/v1/expense-categories[/{id}]` | Jenis biaya keluar + akun beban (CoA) |
 | GET/POST/PATCH | `/api/v1/vendors[/{id}]` | Vendor/penerima pembayaran |
-| GET/POST | `/api/v1/expenses` | Daftar (filter unit/status/tanggal/cari) & buat pengajuan (dengan `lines[]` + `shippingCost`) |
-| GET | `/api/v1/expenses/{id}` | Rincian pengajuan + riwayat pembayaran |
+| GET/POST | `/api/v1/expenses` | Daftar (filter unit/status/tanggal/cari) & buat pengajuan (dengan `lines[]`, `shippingCost`, `priority`, `paymentDueAt`) |
+| GET/PATCH/DELETE | `/api/v1/expenses/{id}` | Rincian (termasuk `priority` + `payment_due_at`) · edit (Draft/Ditolak) · hapus permanen (`transaction.delete`) |
 | POST | `/api/v1/expenses/{id}/submit`, `/approve`, `/reject`, `/cancel` | Alur pengajuan (maker-checker) |
 | GET/POST | `/api/v1/payment-requests` | Daftar & buat MCM (pengajuan pembayaran) |
-| GET | `/api/v1/payment-requests/{id}` | Detail MCM |
+| GET/PATCH/DELETE | `/api/v1/payment-requests/{id}` | Detail · edit (Draft/Ditolak) · hapus permanen (`transaction.delete`, ditolak bila `POSTED`) |
 | POST | `/api/v1/payment-requests/{id}/submit`, `/approve`, `/reject`, `/cancel` | Alur MCM (approve oleh Ketua Yayasan) |
 | POST | `/api/v1/payment-requests/{id}/post` | Posting MCM → pembayaran + kas keluar + jurnal |
+| GET/POST | `/api/v1/attachments` | Daftar lampiran per entitas & unggah banyak file sekaligus (JSON base64) |
+| GET/DELETE | `/api/v1/attachments/{id}/download`, `/api/v1/attachments/{id}` | Unduh & hapus lampiran |
 | GET | `/api/v1/expense-payments` | Daftar pembayaran pengeluaran |
 | POST | `/api/v1/expenses/{id}/payments` | Catat pembayaran (sebagian/penuh, idempotent) |
 | POST | `/api/v1/expense-payments/{id}/void` | Batalkan pembayaran + mutasi masuk balik |

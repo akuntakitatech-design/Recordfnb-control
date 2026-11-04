@@ -19,6 +19,7 @@ import { receiptRouter } from './routes/receiptRoutes.js';
 import { cashBankRouter } from './routes/cashBankRoutes.js';
 import { expenseRouter } from './routes/expenseRoutes.js';
 import { paymentRequestRouter } from './routes/paymentRequestRoutes.js';
+import { attachmentRouter } from './routes/attachmentRoutes.js';
 import { accountingRouter } from './routes/accountingRoutes.js';
 import { reportRouter } from './routes/reportRoutes.js';
 
@@ -36,6 +37,7 @@ app.use((_req, res, next) => {
   next();
 });
 
+app.use('/api/v1/attachments', express.json({ limit: '60mb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 
@@ -58,6 +60,7 @@ app.use('/api/v1', receiptRouter);
 app.use('/api/v1', cashBankRouter);
 app.use('/api/v1', expenseRouter);
 app.use('/api/v1', paymentRequestRouter);
+app.use('/api/v1', attachmentRouter);
 app.use('/api/v1', accountingRouter);
 app.use('/api/v1', reportRouter);
 
