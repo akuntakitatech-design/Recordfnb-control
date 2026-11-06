@@ -100,6 +100,44 @@ Semua respons API mengirim `X-Content-Type-Options: nosniff`, `X-Frame-Options: 
 | PUT | `/api/v1/users/{id}/units` | `user.manage` |
 | GET | `/api/v1/audit-logs` | `audit.view` |
 
+### 5.1 Role & kewenangan
+
+| Method | Endpoint | Permission |
+|---|---|---|
+| GET | `/api/v1/roles` | `role.manage` atau `user.manage` |
+| GET | `/api/v1/roles/{id}` | `role.manage` |
+| POST | `/api/v1/roles` | `role.manage` |
+| PATCH | `/api/v1/roles/{id}` | `role.manage` |
+| DELETE | `/api/v1/roles/{id}` | `role.manage` |
+| GET | `/api/v1/permissions` | `role.manage` |
+
+Role disimpan di tabel `roles` + `role_permissions`, sehingga jabatan baru bisa ditambah tanpa mengubah kode.
+Contoh payload:
+
+```json
+POST /api/v1/roles
+{ "code": "STAF_GUDANG", "name": "Staf Gudang", "description": "Penerima barang",
+  "isGlobal": false, "permissions": ["unit.view", "expense.view", "attachment.upload"] }
+```
+
+**Kewenangan mengikuti fitur.** `GET /permissions` mengembalikan katalog yang dikelompokkan per fitur
+(`Organisasi & Unit`, `Pengeluaran`, `Akuntansi`, …). Saat backend start, katalog di-`upsert` ke tabel
+`permissions`, sehingga setiap rilis fitur baru otomatis menambah centangan di layar role:
+
+- role **bawaan** (`is_system = 1`) otomatis mendapat kewenangan baru sesuai definisi di kode;
+- role **buatan admin** tidak otomatis — admin mencentang sendiri;
+- pencabutan yang dilakukan admin **tidak** dibatalkan saat restart (penanda `roles.seeded_at`).
+
+**Pengaman**
+- Role bawaan: `code`, `is_global`, dan `status` terkunci, serta tidak bisa dihapus → `409 ROLE_SYSTEM_LOCKED`.
+- Role yang masih dipakai pengguna tidak bisa dihapus → `409 ROLE_IN_USE`.
+- Perubahan yang membuat **tidak ada pengguna aktif** pemegang `role.manage` ditolak dan di-*rollback* →
+  `409 ROLE_MANAGE_REQUIRED`.
+- Role nonaktif: pengguna tidak bisa login (`403 ROLE_INACTIVE`) dan token lamanya berhenti berlaku.
+- Kode role duplikat → `409 ROLE_CODE_DUPLICATE`; kewenangan yang tidak dikenal → `400 ROLE_PERMISSION_INVALID`.
+
+Perubahan kewenangan **berlaku seketika** (cache role diperbarui saat role disimpan) tanpa perlu login ulang.
+
 **Reset password oleh admin**
 - `POST /api/v1/users/{id}/reset-password` body `{ password }` (min. 8 karakter) menetapkan password
   sementara dan menyalakan `must_change_password`, sehingga pengguna wajib menggantinya saat login berikutnya.
@@ -313,6 +351,9 @@ dokumen sumber dengan `document_number`, `document_date`, `amount`, `party`, `re
 
 ## 11. Matriks permission per role
 
+Matriks di bawah adalah **default role bawaan**. Setelah aplikasi berjalan, kewenangan bisa diubah admin lewat
+`PATCH /roles/{id}` (lihat §5.1) — tabel ini hanya menggambarkan kondisi awal.
+
 | Grup permission | PIMPINAN | ADMIN | FINANCE | ACCOUNTING | KEPALA JENJANG | KEPALA CABANG | BENDAHARA | PURCHASING | AUDITOR |
 |---|---|---|---|---|---|---|---|---|---|
 | Struktur & master unit | view | kelola | view | view | view | view | view | view | view |
@@ -323,6 +364,7 @@ dokumen sumber dengan `document_number`, `document_date`, `amount`, `party`, `re
 | Pengeluaran | view, approve | penuh | penuh | approve, void | approve | create, approve | create, pay | create | view |
 | Lampiran | view | unggah, hapus | unggah | view | view | unggah | unggah | unggah | view |
 | Hapus permanen transaksi | – | ya | – | – | – | – | – | – | – |
+| Role & kewenangan | – | ya | – | – | – | – | – | – | – |
 | Akuntansi | view | view + CoA | view | penuh | view | view | view | – | view |
 | Laporan | view | view | view | view | view | view | view | view | view |
 | Pengguna & audit | audit | penuh | – | audit | – | – | – | – | audit |
@@ -367,6 +409,13 @@ dan MCM. Role lain harus memakai pembatalan (VOID/CANCEL) agar jejak audit tetap
 | `ATTACHMENT_FILES_REQUIRED` / `TOO_MANY_FILES` | 400 | Tidak ada file / lebih dari 10 file |
 | `ATTACHMENT_FILE_INVALID` / `FILE_TOO_LARGE` | 400 | Base64 rusak / file > 5 MB |
 | `ATTACHMENT_TOTAL_TOO_LARGE` | 400 | Total file sekali unggah > 20 MB |
+| `ROLE_INVALID` / `ROLE_INACTIVE` | 400/403 | Role tidak dikenal / role nonaktif |
+| `ROLE_NOT_FOUND` | 404 | Role tidak ditemukan |
+| `ROLE_CODE_DUPLICATE` | 409 | Kode role sudah dipakai |
+| `ROLE_PERMISSION_INVALID` | 400 | Ada kewenangan yang tidak dikenal katalog |
+| `ROLE_SYSTEM_LOCKED` | 409 | Role bawaan tidak bisa dihapus/diubah identitasnya |
+| `ROLE_IN_USE` | 409 | Role masih dipakai pengguna |
+| `ROLE_MANAGE_REQUIRED` | 409 | Perubahan akan menghilangkan satu-satunya pengelola role |
 | `ACCOUNT_MAPPING_MISSING` | 400 | Akun tidak ada di CoA / tidak postable |
 | `JOURNAL_NOT_BALANCED` | 409 | Debit ≠ kredit |
 | `JOURNAL_NOT_REVERSIBLE` | 409 | Jurnal sudah dibalik / bukan ORIGINAL |

@@ -14,6 +14,7 @@ import { Units } from './pages/Units';
 import { BankAccounts } from './pages/BankAccounts';
 import { Readiness } from './pages/Readiness';
 import { Users as UsersPage } from './pages/Users';
+import { Roles as RolesPage } from './pages/Roles';
 import { Audit } from './pages/Audit';
 import { Students } from './pages/Students';
 import { Fees } from './pages/Fees';
@@ -29,7 +30,7 @@ type Page =
   | 'dashboard' | 'organization' | 'units' | 'banks' | 'readiness'
   | 'students' | 'fees' | 'billing' | 'receivables' | 'receipts' | 'cashbank' | 'expenses' | 'accounting'
   | 'reports'
-  | 'users' | 'audit';
+  | 'users' | 'audit' | 'roles';
 
 type NavItem = { page: Page; label: string; icon: ReactNode; permission: Permission | null };
 type NavGroup = { label: string; items: NavItem[] };
@@ -83,6 +84,7 @@ const NAV: NavGroup[] = [
     label: 'Administrasi',
     items: [
       { page: 'users', label: 'Pengguna & Akses', icon: <UsersRound size={18} />, permission: 'user.manage' },
+      { page: 'roles', label: 'Role & Kewenangan', icon: <ShieldCheck size={18} />, permission: 'role.manage' },
       { page: 'audit', label: 'Audit Trail', icon: <ScrollText size={18} />, permission: 'audit.view' },
     ],
   },
@@ -104,6 +106,7 @@ const PAGE_TITLES: Record<Page, string> = {
   accounting: 'Akuntansi',
   reports: 'Laporan Yayasan',
   users: 'Pengguna & Akses',
+  roles: 'Role & Kewenangan',
   audit: 'Audit Trail',
 };
 
@@ -200,7 +203,7 @@ export function App() {
       <div className="content-shell">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{ROLE_LABEL[session.user.role]}</div>
+            <div className="eyebrow">{session.user.roleName || ROLE_LABEL[session.user.role] || session.user.role}</div>
             <h2 data-testid="page-title">{PAGE_TITLES[current]}</h2>
           </div>
           <div className="user-box">
@@ -228,6 +231,7 @@ export function App() {
           {current === 'accounting' && <Accounting session={session} />}
           {current === 'reports' && <Reports session={session} />}
           {current === 'users' && <UsersPage session={session} />}
+          {current === 'roles' && <RolesPage session={session} />}
           {current === 'audit' && <Audit />}
         </main>
       </div>

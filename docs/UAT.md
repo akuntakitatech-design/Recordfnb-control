@@ -13,7 +13,7 @@ curl -s http://127.0.0.1:4100/api/health
 export ADMIN_EMAIL=admin@sekolah.test
 export ADMIN_PASSWORD='...'
 cd tests
-for suite in foundation organization_master payment_request billing receipt expense accounting report; do
+for suite in foundation organization_master payment_request billing receipt expense accounting report role; do
   uv run --with httpx python ${suite}_uat.py
 done
 ```
@@ -35,7 +35,8 @@ dijalankan berulang pada DB yang sama.
 | `tests/expense_uat.py` | FC-01 pengeluaran | **52/52 lulus** |
 | `tests/accounting_uat.py` | ACC-01 | **45/45 lulus** |
 | `tests/report_uat.py` | RPT-01 | **31/31 lulus** |
-| **Total** | | **317/317 lulus** |
+| `tests/role_uat.py` | ROLE-01 role dinamis & kewenangan | **40/40 lulus** |
+| **Total** | | **357/357 lulus** |
 
 ## Matriks T01–T20
 
@@ -79,6 +80,7 @@ dijalankan berulang pada DB yang sama.
 | Setup yayasan/sekolah disederhanakan (**T23**) | `foundation_uat` — unit baru **langsung ACTIVE** tanpa langkah aktivasi; kode unit otomatis `TK-xx`; sekolah resmi + lokasi + tahun ajaran terisi otomatis; `effectiveStart` default hari ini; sekolah resmi baru otomatis `VERIFIED`; UI master hanya **Edit · Hapus** dan tab Kelompok Sekolah tidak ditampilkan |
 | Pembelian + MCM (**T24**) | `payment_request_uat` — total pengajuan = Σ(qty×harga)+ongkir; qty 0 ditolak; MCM untuk pengajuan belum disetujui 409; MCM melebihi sisa 409; finance tidak bisa menyetujui MCM sendiri 403; Ketua menyetujui 200; posting membuat pembayaran + mutasi `OUT` + jurnal; DP lalu pelunasan → pengajuan `PAID`; MCM ditolak bisa diajukan ulang; audit `PAYMENT_REQUEST_*` tercatat |
 | Prioritas, batas bayar, lampiran, edit & hapus permanen (**T25**) | `payment_request_uat` — prioritas default `NORMAL`; `MENDESAK` tersimpan; nilai prioritas asing → `400 EXPENSE_PRIORITY_INVALID`; `paymentDueAt` tersimpan dan muncul di **daftar** maupun detail; format salah → `400 EXPENSE_PAYMENT_DUE_INVALID`; prioritas bisa diubah lewat `PATCH`; unggah 2 lampiran sekali kirim (`count=2`), daftar 2 file, unduh 200, hapus 1 lampiran 200; file > 5 MB → `400 ATTACHMENT_FILE_TOO_LARGE`; > 10 file → `400 ATTACHMENT_TOO_MANY_FILES`; total > 20 MB → `400 ATTACHMENT_TOTAL_TOO_LARGE`; bendahara **403** saat hapus permanen; `ADMIN_YAYASAN` menghapus pengajuan → 200, detail 404, lampiran ikut hilang (unduhan 404); pengajuan berbayar → `409 EXPENSE_HAS_PAYMENT`; MCM Draft bisa diedit nominalnya dan dihapus permanen |
+| Role dinamis & kewenangan (**ROLE-01**) | `role_uat` — katalog kewenangan terbaca dan dikelompokkan per fitur (≥ 40 kewenangan, 10 grup); 9 role bawaan tersedia dengan penanda `is_system`/`is_global`; role baru bisa dibuat dan kode duplikat ditolak 409; kewenangan tak dikenal ditolak 400; pengguna dengan role baru hanya mendapat kewenangan yang dicentang (aksi lain 403) dan menu role tertutup; menambah/mencabut kewenangan **langsung berlaku** tanpa login ulang; role bawaan tidak bisa dihapus (409) dan role terpakai tidak bisa dihapus (409 `ROLE_IN_USE`); role tak terpakai bisa dihapus; pengguna `PURCHASING` kini bisa dibuat (regresi `chk_users_role`); pencabutan `role.manage` terakhir ditolak 409 `ROLE_MANAGE_REQUIRED` dan kewenangan admin tetap utuh |
 
 ## Yang sengaja tidak diuji di otomasi
 

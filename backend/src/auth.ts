@@ -1,25 +1,15 @@
 import jwt from 'jsonwebtoken';
 import type { NextFunction, Request, Response } from 'express';
-
-export const ROLES = [
-  'PIMPINAN',
-  'ADMIN_YAYASAN',
-  'FINANCE_PUSAT',
-  'ACCOUNTING_PUSAT',
-  'KEPALA_JENJANG',
-  'KEPALA_CABANG',
-  'BENDAHARA_CABANG',
-  'PURCHASING',
-  'AUDITOR',
-] as const;
-
-export type UserRole = (typeof ROLES)[number];
+import { roleIsActive } from './permissions.js';
 
 export type SessionUser = {
   id: string;
   email: string;
   fullName: string;
-  role: UserRole;
+  /** Kode role. Daftar role dikelola di tabel `roles` (bisa ditambah admin). */
+  role: string;
+  /** Nama tampilan role, diisi saat login/me dari tabel roles. */
+  roleName?: string;
 };
 
 declare global {
@@ -63,21 +53,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.[cookieName()];
   if (!token) return res.status(401).json({ error: 'UNAUTHENTICATED' });
   try {
-    req.user = jwt.verify(token, secret()) as SessionUser;
+    const user = jwt.verify(token, secret()) as SessionUser;
+    // Role bisa dinonaktifkan atau dihapus setelah token diterbitkan.
+    if (!roleIsActive(user.role)) return res.status(403).json({ error: 'ROLE_INACTIVE' });
+    req.user = user;
     next();
   } catch {
     return res.status(401).json({ error: 'INVALID_SESSION' });
   }
-}
-
-export function requireRole(...roles: UserRole[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.user) return res.status(401).json({ error: 'UNAUTHENTICATED' });
-    if (!roles.includes(req.user.role)) return res.status(403).json({ error: 'ROLE_FORBIDDEN' });
-    next();
-  };
-}
-
-export function isUserRole(value: string): value is UserRole {
-  return (ROLES as readonly string[]).includes(value);
 }

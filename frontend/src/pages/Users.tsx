@@ -4,9 +4,7 @@ import { KeyRound, Pencil, Plus } from 'lucide-react';
 import { api, messageOf } from '../api';
 import { Modal } from '../components/Modal';
 import { StatusBadge } from './Organization';
-import { ROLES, ROLE_LABEL, type AppUser, type Role, type Session, type Unit } from '../types';
-
-const GLOBAL_ROLES = new Set<Role>(['PIMPINAN', 'ADMIN_YAYASAN', 'FINANCE_PUSAT', 'ACCOUNTING_PUSAT', 'AUDITOR']);
+import { roleLabel, type AppUser, type Role, type RoleRow, type Session, type Unit } from '../types';
 
 type Form = {
   fullName: string;
@@ -22,6 +20,7 @@ const EMPTY: Form = { fullName: '', email: '', password: '', role: 'BENDAHARA_CA
 export function Users({ session }: { session: Session }) {
   const [rows, setRows] = useState<AppUser[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
+  const [roleOptions, setRoleOptions] = useState<RoleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -34,12 +33,14 @@ export function Users({ session }: { session: Session }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [userList, unitList] = await Promise.all([
+      const [userList, unitList, roleList] = await Promise.all([
         api<AppUser[]>('/api/v1/users'),
         api<{ rows: Unit[] }>('/api/v1/organization/units?pageSize=100'),
+        api<RoleRow[]>('/api/v1/roles'),
       ]);
       setRows(userList);
       setUnits(unitList.rows);
+      setRoleOptions(roleList);
       setError('');
     } catch (loadError) {
       setError(messageOf(loadError));
@@ -50,7 +51,11 @@ export function Users({ session }: { session: Session }) {
 
   useEffect(() => { void load(); }, [load]);
 
-  const isGlobal = useMemo(() => GLOBAL_ROLES.has(form.role), [form.role]);
+  const activeRoles = useMemo(() => roleOptions.filter(role => role.status === 'ACTIVE'), [roleOptions]);
+  const isGlobal = useMemo(
+    () => roleOptions.find(role => role.code === form.role)?.is_global ?? false,
+    [roleOptions, form.role],
+  );
 
   function openCreate() {
     setForm(EMPTY);
@@ -177,9 +182,11 @@ export function Users({ session }: { session: Session }) {
                     {user.id === session.user.id && <span className="badge brand" style={{ marginLeft: 6 }}>Anda</span>}
                   </td>
                   <td className="cell-muted">{user.email}</td>
-                  <td><span className="badge info">{ROLE_LABEL[user.role] || user.role}</span></td>
+                  <td><span className="badge info">{roleLabel(user.role, user.role_name)}</span></td>
                   <td className="cell-muted">
-                    {GLOBAL_ROLES.has(user.role) ? 'Semua unit' : (user.units.map(unit => unit.unit_code).join(', ') || '—')}
+                    {roleOptions.find(role => role.code === user.role)?.is_global
+                      ? 'Semua unit'
+                      : (user.units.map(unit => unit.unit_code).join(', ') || '—')}
                   </td>
                   <td><StatusBadge value={user.status} /></td>
                   <td>
@@ -220,7 +227,7 @@ export function Users({ session }: { session: Session }) {
               </label>
               <label className="field">Role
                 <select className="select" value={form.role} onChange={event => setForm({ ...form, role: event.target.value as Role })}>
-                  {ROLES.map(role => <option key={role} value={role}>{ROLE_LABEL[role]}</option>)}
+                  {activeRoles.map(role => <option key={role.code} value={role.code}>{role.name}</option>)}
                 </select>
               </label>
               <label className="field">{editing === 'new' ? 'Password' : 'Password baru (opsional)'}

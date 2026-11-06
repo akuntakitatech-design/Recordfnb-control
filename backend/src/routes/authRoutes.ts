@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { exec, one } from '../db.js';
 import { clearSessionCookie, requireAuth, setSessionCookie, signSession, type SessionUser } from '../auth.js';
-import { allowedUnitIds, permissionsOf } from '../permissions.js';
+import { allowedUnitIds, permissionsOf, roleState } from '../permissions.js';
 import { text } from '../http.js';
 import { LOGIN_LIMIT, blockedFor, clearFailures, loginLimitKey, recordFailure } from '../rateLimit.js';
 
@@ -20,6 +20,10 @@ type UserRow = {
 
 function toSession(user: UserRow): SessionUser {
   return { id: user.id, email: user.email, fullName: user.full_name, role: user.role };
+}
+
+function withRoleName(session: SessionUser): SessionUser {
+  return { ...session, roleName: roleState(session.role)?.name || session.role };
 }
 
 authRouter.post('/login', async (req, res) => {
@@ -42,8 +46,13 @@ authRouter.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
   }
 
+  const role = roleState(user.role);
+  if (!role || role.status !== 'ACTIVE') {
+    return res.status(403).json({ error: 'ROLE_INACTIVE' });
+  }
+
   clearFailures(limitKey);
-  const session = toSession(user);
+  const session = withRoleName(toSession(user));
   setSessionCookie(res, signSession(session));
   res.json({
     user: session,
@@ -64,7 +73,7 @@ authRouter.get('/me', requireAuth, async (req, res) => {
   if (!user || user.status !== 'ACTIVE') return res.status(401).json({ error: 'USER_INACTIVE' });
   const unitScope = await allowedUnitIds(req.user!);
   res.json({
-    user: toSession(user),
+    user: withRoleName(toSession(user)),
     permissions: permissionsOf(user.role),
     unitScope,
     mustChangePassword: Boolean(user.must_change_password),

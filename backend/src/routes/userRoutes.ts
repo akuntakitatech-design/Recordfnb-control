@@ -2,8 +2,8 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { exec, one, query } from '../db.js';
-import { isUserRole, ROLES, requireAuth } from '../auth.js';
-import { isGlobalRole, requirePermission, ROLE_LABEL } from '../permissions.js';
+import { requireAuth } from '../auth.js';
+import { isGlobalRole, requirePermission, roleIsActive } from '../permissions.js';
 import { writeAudit } from '../audit.js';
 import { text } from '../http.js';
 
@@ -23,12 +23,12 @@ async function unitsOf(userId: string) {
   );
 }
 
-userRouter.get('/roles', (_req, res) => {
-  res.json(ROLES.map(role => ({ code: role, label: ROLE_LABEL[role], global: isGlobalRole(role) })));
-});
-
 userRouter.get('/users', requirePermission('user.manage'), async (_req, res) => {
-  const rows = await query<any>('SELECT id,email,full_name,role,status,created_at,updated_at FROM users ORDER BY full_name');
+  const rows = await query<any>(
+    `SELECT u.id,u.email,u.full_name,u.role,u.status,u.created_at,u.updated_at,r.name role_name
+       FROM users u LEFT JOIN roles r ON r.code=u.role
+      ORDER BY u.full_name`,
+  );
   const result = [];
   for (const row of rows) {
     result.push({ ...row, units: await unitsOf(row.id) });
@@ -48,7 +48,7 @@ userRouter.post('/users', requirePermission('user.manage'), async (req, res) => 
   if (!fullName || !email) return res.status(400).json({ error: 'USER_FIELDS_REQUIRED' });
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'EMAIL_INVALID' });
   if (password.length < 8) return res.status(400).json({ error: 'PASSWORD_TOO_SHORT' });
-  if (!isUserRole(role)) return res.status(400).json({ error: 'ROLE_INVALID' });
+  if (!(await roleIsActive(role))) return res.status(400).json({ error: 'ROLE_INVALID' });
   if (await one('SELECT id FROM users WHERE email=?', [email])) return res.status(409).json({ error: 'EMAIL_DUPLICATE' });
 
   const unitIds: string[] = Array.isArray(req.body?.unitIds) ? req.body.unitIds.map((id: unknown) => text(id)).filter(Boolean) : [];
@@ -82,7 +82,7 @@ userRouter.patch('/users/:id', requirePermission('user.manage'), async (req, res
   const fullName = text(req.body?.fullName) || before.full_name;
   const role = text(req.body?.role).toUpperCase() || before.role;
   const status = text(req.body?.status).toUpperCase() || before.status;
-  if (!isUserRole(role)) return res.status(400).json({ error: 'ROLE_INVALID' });
+  if (!(await roleIsActive(role))) return res.status(400).json({ error: 'ROLE_INVALID' });
   if (!['ACTIVE', 'INACTIVE'].includes(status)) return res.status(400).json({ error: 'USER_STATUS_INVALID' });
   if (id === req.user!.id && (role !== before.role || status !== 'ACTIVE')) {
     return res.status(400).json({ error: 'CANNOT_CHANGE_OWN_ACCESS' });
