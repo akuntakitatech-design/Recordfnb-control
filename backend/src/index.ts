@@ -4,12 +4,14 @@ import 'express-async-errors';
 import cookieParser from 'cookie-parser';
 import { databaseLabel, query } from './db.js';
 import { bootstrapAdmin } from './bootstrap.js';
+import { bootstrapRoles } from './roleBootstrap.js';
 import { runMigrations } from './migrate.js';
 import { authRouter } from './routes/authRoutes.js';
 import { organizationRouter } from './routes/organizationRoutes.js';
 import { organizationMasterRouter } from './routes/organizationMasterRoutes.js';
 import { bankRouter } from './routes/bankRoutes.js';
 import { userRouter } from './routes/userRoutes.js';
+import { roleRouter } from './routes/roleRoutes.js';
 import { dashboardRouter } from './routes/dashboardRoutes.js';
 import { studentRouter } from './routes/studentRoutes.js';
 import { feeRouter } from './routes/feeRoutes.js';
@@ -51,6 +53,7 @@ app.use('/api/v1/organization', organizationRouter);
 app.use('/api/v1/organization', organizationMasterRouter);
 app.use('/api/v1', bankRouter);
 app.use('/api/v1', userRouter);
+app.use('/api/v1', roleRouter);
 app.use('/api/v1', dashboardRouter);
 app.use('/api/v1', studentRouter);
 app.use('/api/v1', feeRouter);
@@ -82,6 +85,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 runMigrations()
+  .then(() => bootstrapRoles())
   .then(() => bootstrapAdmin())
   .then(() => app.listen(port, '0.0.0.0', () => console.log(`School Finance ERP listening on :${port}`)))
   .catch(error => {

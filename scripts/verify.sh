@@ -42,7 +42,7 @@ curl -fsS "$BASE/api/health" >/dev/null || { printf 'Backend tidak merespons di 
 
 failed=()
 index=0
-for suite in foundation organization_master payment_request billing receipt expense accounting report; do
+for suite in foundation organization_master payment_request billing receipt expense accounting report role; do
   step "UAT ${suite}"
   # Suffix berbeda per suite agar kode master tidak bertabrakan (4 digit, dipakai nomor rekening).
   if [[ -n "${RUN_SUFFIX:-}" ]]; then

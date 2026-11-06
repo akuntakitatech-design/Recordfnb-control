@@ -10,9 +10,10 @@ export const ROLES = [
   'AUDITOR',
 ] as const;
 
-export type Role = (typeof ROLES)[number];
+/** Kode role. Daftar lengkap dikelola di server (`GET /api/v1/roles`). */
+export type Role = string;
 
-export const ROLE_LABEL: Record<Role, string> = {
+export const ROLE_LABEL: Record<string, string> = {
   PIMPINAN: 'Pimpinan Yayasan',
   ADMIN_YAYASAN: 'Admin Yayasan',
   FINANCE_PUSAT: 'Finance Pusat',
@@ -23,6 +24,11 @@ export const ROLE_LABEL: Record<Role, string> = {
   PURCHASING: 'Purchasing',
   AUDITOR: 'Auditor',
 };
+
+/** Label role dengan fallback ke kodenya (role buatan admin tidak ada di peta bawaan). */
+export function roleLabel(code: string, name?: string | null): string {
+  return name || ROLE_LABEL[code] || code;
+}
 
 export type Permission =
   | 'entity.manage' | 'unit.view' | 'unit.create' | 'unit.edit' | 'unit.activate' | 'unit.deactivate'
@@ -40,6 +46,7 @@ export type Permission =
   | 'payment_request.create' | 'payment_request.approve'
   | 'attachment.upload' | 'transaction.delete'
   | 'accounting.view' | 'journal.post' | 'period.close' | 'coa.manage'
+  | 'role.manage'
   | 'receivable.view';
 
 export type SessionUser = {
@@ -47,6 +54,7 @@ export type SessionUser = {
   email: string;
   fullName: string;
   role: Role;
+  roleName?: string;
 };
 
 export type Session = {
@@ -189,9 +197,34 @@ export type AppUser = {
   email: string;
   full_name: string;
   role: Role;
+  role_name?: string | null;
   status: 'ACTIVE' | 'INACTIVE';
   units: { unit_id: string; unit_code: string; unit_name: string }[];
 };
+
+/* ------------------------------------------------------------------ Role & kewenangan */
+
+export type RoleRow = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  is_system: boolean;
+  is_global: boolean;
+  status: 'ACTIVE' | 'INACTIVE';
+  sort_order: number;
+  user_count: number;
+  permission_count: number;
+};
+
+export type RoleDetail = RoleRow & { permissions: string[] };
+
+export type PermissionGroup = {
+  group: string;
+  permissions: { code: string; label: string; description: string | null }[];
+};
+
+export type PermissionCatalog = { total: number; groups: PermissionGroup[] };
 
 export type DashboardData = {
   legalEntity: { id: string; code: string; name: string };

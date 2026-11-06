@@ -28,6 +28,7 @@ pengakuan pendapatan `DEFERRED`.
 | Lampiran dokumen | Unggah **banyak file sekaligus** (maks 10 file, 5 MB/file) untuk pengajuan, MCM, tagihan, penerimaan, pembayaran, dan jurnal; disimpan di tabel `attachments`, bisa diunduh dan dihapus |
 | Akuntansi | Bagan akun (CoA) dengan tipe & saldo normal, jurnal otomatis dari tagihan/penerimaan/pengeluaran, jurnal manual, jurnal pembalik (reversal), neraca saldo, buku besar, rekonsiliasi subledger vs GL, periode fiskal bulanan + tutup/buka kembali (ACC-01/02/03) |
 | Laporan | Ringkasan cabang & jenjang (tagihan, penerimaan, pengeluaran, surplus, piutang, siswa), aging, status closing, posisi keuangan, aktivitas pendapatan–beban, arus kas per sumber, dan **drill-down** ke dokumen sumber — semua dibatasi scope unit pengguna |
+| Role & kewenangan | Role dikelola di aplikasi (tabel `roles` + `role_permissions`): admin bisa menambah jabatan baru, mencentang kewenangannya per fitur, mengubah, dan menghapus role yang tidak dipakai. **Katalog kewenangan mengikuti fitur aplikasi** — saat fitur baru dirilis, kewenangannya otomatis muncul di layar role, dan role bawaan otomatis mendapatkannya |
 | Hardening | Rate limit login (5 gagal / 15 menit), header keamanan, detail error tidak dibocorkan di production, proteksi VAL-08 untuk identitas unit, dokumentasi API & traceability UAT, skrip verifikasi satu perintah |
 
 **Belum termasuk (fase berikut):** pengakuan pendapatan `DEFERRED`,
@@ -59,9 +60,11 @@ backend/
   db/migrations/008_purchase_and_payment_request.sql  # rincian barang, ongkir, MCM
   db/migrations/009_attachments.sql       # lampiran dokumen generik (multi-file, BLOB)
   db/migrations/010_expense_priority_deadline.sql  # prioritas + batas waktu pembayaran
+  db/migrations/011_roles_and_permissions.sql      # role dinamis + katalog kewenangan
   src/index.ts                            # migrasi -> bootstrap admin -> listen
   src/db.ts · src/http.ts                 # pool & helper validasi
-  src/auth.ts · src/permissions.ts        # sesi, 9 role, permission, unit scope
+  src/auth.ts · src/permissions.ts        # sesi, katalog kewenangan, cache role, unit scope
+  src/roleBootstrap.ts                    # sinkron role & kewenangan saat start
   src/audit.ts                            # audit trail terstruktur
   src/rateLimit.ts                        # rate limit percobaan login (in-memory)
   src/accounting.ts                       # mesin jurnal: periode, posting, reversal, mapping
@@ -69,6 +72,7 @@ backend/
   src/routes/organizationMasterRoutes.ts  # aktif/nonaktif & hapus master organisasi
   src/routes/bankRoutes.ts                # rekening fisik + verifikasi
   src/routes/userRoutes.ts                # pengguna, scope unit, audit log global
+  src/routes/roleRoutes.ts                # role dinamis & matriks kewenangan
   src/routes/studentRoutes.ts             # siswa + penempatan unit
   src/routes/feeRoutes.ts                 # jenis biaya + tarif per unit
   src/routes/billingRoutes.ts             # billing run, invoice, void
@@ -87,6 +91,7 @@ frontend/
   src/pages/Login.tsx · ForcePasswordChange.tsx
   src/pages/Dashboard.tsx · Organization.tsx · Units.tsx
   src/pages/BankAccounts.tsx · Readiness.tsx · Users.tsx · Audit.tsx
+  src/pages/Roles.tsx                     # role & matriks kewenangan
   src/pages/Students.tsx · Fees.tsx · Billing.tsx · Receivables.tsx
   src/pages/Receipts.tsx · CashBank.tsx · Expenses.tsx · Accounting.tsx · Reports.tsx
   src/components/Attachments.tsx          # panel unggah/unduh/hapus lampiran
@@ -96,6 +101,7 @@ tests/billing_uat.py                      # UAT BILL-01 (tagihan & piutang)
 tests/receipt_uat.py                      # UAT FC-01 (penerimaan & kas/bank)
 tests/expense_uat.py                      # UAT FC-01 (pengeluaran & maker-checker)
 tests/payment_request_uat.py              # UAT T24 (rincian barang, ongkir, MCM, lampiran, edit/hapus)
+tests/role_uat.py                         # UAT ROLE-01 (role dinamis & kewenangan)
 tests/accounting_uat.py                   # UAT ACC-01 (jurnal, rekonsiliasi, tutup buku)
 tests/report_uat.py                        # UAT RPT-01 (agregasi & drill-down)
 docs/API.md                               # kontrak API, permission matrix, kode error
@@ -141,17 +147,19 @@ lain lewat tombol **Reset password** di menu Pengguna (`POST /api/v1/users/{id}/
 | Role | Cakupan |
 |---|---|
 | Pimpinan Yayasan | Monitoring semua cabang, approval (tanpa ubah jurnal) |
-| Admin Yayasan | Organisasi, pengguna, rekening, unit |
+| Admin Yayasan | Organisasi, pengguna, role & kewenangan, rekening, unit |
 | Finance Pusat | Rekening & mapping seluruh unit |
 | Accounting Pusat | Mapping akun & kesiapan keuangan |
 | Kepala Jenjang | Monitoring jenjang yang ditetapkan |
 | Kepala Cabang | Monitoring/approval unit sendiri |
 | Bendahara Cabang | Input pada unit sendiri |
-| Purchasing | Input pengajuan pembelian pada unit yang ditetapkan (tanpa approval/pembayaran) |
+| Purchasing | Input pengajuan pembelian pada unit yang ditetapkan |
 | Auditor | Read-only + audit trail |
 
-Role pusat (`PIMPINAN`, `ADMIN_YAYASAN`, `FINANCE_PUSAT`, `ACCOUNTING_PUSAT`, `AUDITOR`) melihat
-seluruh unit. Role cabang dibatasi `user_unit_access` dan **dicek di server** pada setiap endpoint.
+Role di atas adalah **role bawaan** (`is_system`). Admin bisa menambah role baru (mis. *Staf Gudang*) lewat menu **Role & Kewenangan** dan mencentang kewenangannya sendiri.
+
+Cakupan unit ditentukan properti role: role **pusat** melihat semua unit, role **unit** dibatasi `user_unit_access`
+(dicek di server pada setiap endpoint).
 
 ## 6. API utama
 
@@ -171,6 +179,8 @@ Dokumentasi lengkap (kontrak, permission matrix, kode error, contoh payload): **
 | GET/POST/PUT | `/api/v1/bank-accounts` | Rekening fisik |
 | POST | `/api/v1/bank-accounts/{id}/verify`, `/deactivate` | Verifikasi & nonaktif |
 | GET/POST/PATCH | `/api/v1/users` | Pengguna + role |
+| GET/POST/PATCH/DELETE | `/api/v1/roles[/{id}]` | Role dinamis (tambah jabatan, ubah kewenangan, hapus) |
+| GET | `/api/v1/permissions` | Katalog kewenangan per fitur (mengikuti kode) |
 | POST | `/api/v1/users/{id}/reset-password` | Reset password (wajib ganti saat login) |
 | PATCH/DELETE | `/api/v1/organization/{master}/{id}` | Status aktif/nonaktif & hapus master (jenjang, kelompok, sekolah resmi, lokasi, tahun ajaran) |
 | PUT | `/api/v1/users/{id}/units` | Scope unit |
